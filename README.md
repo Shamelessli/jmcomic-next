@@ -6,6 +6,8 @@
 
 JMcomic Next 是一个基于 Kotlin、Jetpack Compose 与 Material 3 构建的 Android 漫画客户端。项目由 `Dedicatus546/jm-mobile` 二次开源整理而来，当前仓库在原项目基础上继续维护移动端界面、阅读体验、本地缓存、下载管理、PDF 导出与 AI 对话等功能。
 
+本项目基于[Dedicatus546/jm-mobile](https://github.com/Dedicatus546/jm-mobile)魔改而来，使用[JUKOMU/JMComic-Api-Java](https://github.com/JUKOMU/JMComic-Api-Java)作为默认API
+
 感谢[LINUX DO论坛](https://linux.do)以及对本项目提供大力支持的[RawChat团队](https://linux.do/u/RawChat)，没有各位的支持，这个项目不可能出现，由衷感谢各位！
 
 Linux.do提供建议的佬友们：[dijunwanshou](https://linux.do/u/dijunwanshou/summary)、[zeroLin](https://linux.do/u/zerolin/summary)、[dunxuan](https://linux.do/u/dunxuan/summary)、[lyston](https://linux.do/u/lyston/summary)、[catnap](https://linux.do/u/catnap/summary)、[JasonGui](https://linux.do/u/jasongui/summary)、[sswh317](https://linux.do/u/sswh317/summary)、[Jealousy](https://linux.do/u/jealousy/summary)
