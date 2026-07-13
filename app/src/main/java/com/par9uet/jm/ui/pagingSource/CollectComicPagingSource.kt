@@ -15,11 +15,12 @@ class CollectComicPagingSource(
     private val blockedTagList: List<String> = listOf(),
     private val searchText: String = "",
     private val selectedTags: Set<String> = emptySet(),
+    private val folderId: Int = 0,
 ) : PagingSource<Int, Comic>() {
     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, Comic> {
         val currentPage = params.key ?: 1
         return when (val data =
-            userRepository.getCollectComicList(currentPage, order)) {
+            userRepository.getCollectComicList(currentPage, order, folderId)) {
             is NetWorkResult.Error -> {
                 LoadResult.Error(Exception(data.message))
             }

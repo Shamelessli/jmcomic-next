@@ -26,20 +26,32 @@ import com.par9uet.jm.ui.screens.HomeScreen
 import com.par9uet.jm.ui.screens.LocalMainNavController
 import com.par9uet.jm.ui.screens.UserCollectComicScreen
 import com.par9uet.jm.ui.screens.UserScreen
+import com.par9uet.jm.store.LocalSettingManager
 import com.par9uet.jm.store.UserManager
 import org.koin.compose.getKoin
 
 @Composable
 fun TabScreen(
     tabName: String,
-    userManager: UserManager = getKoin().get()
+    userManager: UserManager = getKoin().get(),
+    localSettingManager: LocalSettingManager = getKoin().get()
 ) {
     val tabNavController = rememberNavController()
     val mainNavController = LocalMainNavController.current
     val navBackStackEntry by tabNavController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
     val isLogin by userManager.isLoginState.collectAsState(false)
+    val localSetting by localSettingManager.localSettingState.collectAsState()
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    LaunchedEffect(localSetting.showAiEntry, currentRoute) {
+        if (!localSetting.showAiEntry && currentRoute == "ai") {
+            tabNavController.navigate("home") {
+                popUpTo("ai") {
+                    inclusive = true
+                }
+            }
+        }
+    }
     CompositionLocalProvider(
         LocalTabNavController provides tabNavController,
     ) {

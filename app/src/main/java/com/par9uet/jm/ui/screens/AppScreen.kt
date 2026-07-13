@@ -20,9 +20,10 @@ import org.koin.compose.viewmodel.koinActivityViewModel
 
 @Composable
 fun AppScreen(
-    comicViewModel: ComicViewModel = koinActivityViewModel()
+    comicViewModel: ComicViewModel = koinActivityViewModel(),
+    externalNavController: NavHostController? = null,
 ) {
-    val mainNavController = rememberNavController()
+    val mainNavController = externalNavController ?: rememberNavController()
     CompositionLocalProvider(
         LocalMainNavController provides mainNavController,
     ) {
@@ -56,8 +57,11 @@ fun AppScreen(
             composable(route = "userHistoryComic") { UserHistoryComicScreen() }
             composable(route = "userHistoryComment") { UserHistoryCommentScreen() }
             composable(route = "appLocalSetting") { LocalSettingScreen() }
+            composable(route = "appLockSetting") { AppLockSettingScreen() }
             composable(route = "about") { AboutScreen() }
             composable(route = "checkUpdate") { CheckUpdateScreen() }
+            composable(route = "logViewer") { LogViewerScreen() }
+            composable(route = "cacheCleanup") { CacheCleanupScreen() }
             composable(
                 route = "comicDetail/{id}",
                 arguments = listOf(
@@ -95,13 +99,14 @@ fun AppScreen(
                 ComicReadScreen(comicId = id)
             }
             composable(route = "comicSearch",) { ComicSearchScreen() }
+            composable(route = "extractCode") { ExtractCodeScreen() }
             composable(
                 route = "comicSearchResult/{searchContent}",
                 arguments = listOf(
                     navArgument(name = "searchContent") { type = NavType.StringType }
                 ),
             ) { backStackEntry ->
-                val searchContent = backStackEntry.arguments!!.getString("searchContent")!!
+                val searchContent = backStackEntry.arguments?.getString("searchContent") ?: ""
                 comicViewModel.changeSearchComicContent(searchContent)
                 ComicSearchResultScreen()
             }

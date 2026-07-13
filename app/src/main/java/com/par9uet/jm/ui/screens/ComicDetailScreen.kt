@@ -1,13 +1,12 @@
 package com.par9uet.jm.ui.screens
 
-import androidx.compose.foundation.ExperimentalFoundationApi
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -35,7 +34,6 @@ import androidx.compose.material.icons.filled.RemoveRedEye
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -43,6 +41,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.Divider
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
@@ -53,6 +56,9 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -63,6 +69,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.par9uet.jm.data.models.Comic
+import com.par9uet.jm.storage.ComicReadHistory
 import com.par9uet.jm.store.DownloadManager
 import com.par9uet.jm.store.ReadHistoryManager
 import com.par9uet.jm.store.UserManager
@@ -83,10 +90,7 @@ private fun ComicInfoListItem(
     label: String,
     value: String,
 ) {
-    Row(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
+    Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         AssistChip(
             border = null,
             modifier = Modifier
@@ -146,43 +150,6 @@ private fun ComicDetailSkeleton() {
                         .clip(RoundedCornerShape(4.dp))
                         .shimmer()
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    ComicInfoListItem(
-                        modifier = Modifier.weight(.5f),
-                        icon = Icons.Default.Favorite,
-                        label = "喜欢人数",
-                        value = "0"
-                    )
-                    ComicInfoListItem(
-                        modifier = Modifier.weight(.5f),
-                        icon = Icons.Default.RemoveRedEye,
-                        label = "浏览量",
-                        value = "0"
-                    )
-                }
-                repeat(3) { rowIndex ->
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        val widths = when (rowIndex) {
-                            0 -> listOf(40.dp, 60.dp, 50.dp)
-                            1 -> listOf(80.dp, 60.dp, 70.dp)
-                            else -> listOf(70.dp, 50.dp, 60.dp)
-                        }
-                        repeat(5) { index ->
-                            key("$rowIndex-$index") {
-                                Box(
-                                    modifier = Modifier
-                                        .width(widths[index % widths.size])
-                                        .height(32.dp)
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .shimmer()
-                                )
-                            }
-                        }
-                    }
-                }
             }
         }
     }
@@ -218,21 +185,18 @@ private fun ComicMetadataContent(
         ComicInfoListItem(
             modifier = Modifier.weight(.5f),
             icon = Icons.Default.Favorite,
-            label = "喜欢人数",
+            label = "\u559c\u6b22",
             value = comic.likeCount.toString()
         )
         ComicInfoListItem(
             modifier = Modifier.weight(.5f),
             icon = Icons.Default.RemoveRedEye,
-            label = "浏览量",
+            label = "\u6d4f\u89c8",
             value = comic.readCount.toString()
         )
     }
     if (comic.tagList.isNotEmpty()) {
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
-            verticalArrangement = Arrangement.spacedBy(5.dp)
-        ) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             comic.tagList.forEach {
                 key(it) {
                     ComicContentTag(it)
@@ -241,10 +205,7 @@ private fun ComicMetadataContent(
         }
     }
     if (comic.roleList.isNotEmpty()) {
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
-            verticalArrangement = Arrangement.spacedBy(5.dp)
-        ) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             comic.roleList.forEach {
                 key(it) {
                     ComicRoleTag(it)
@@ -253,10 +214,7 @@ private fun ComicMetadataContent(
         }
     }
     if (comic.workList.isNotEmpty()) {
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
-            verticalArrangement = Arrangement.spacedBy(5.dp)
-        ) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             comic.workList.forEach {
                 key(it) {
                     ComicWorkTag(it)
@@ -266,11 +224,6 @@ private fun ComicMetadataContent(
     }
 }
 
-@OptIn(
-    ExperimentalMaterial3Api::class,
-    ExperimentalFoundationApi::class,
-    ExperimentalLayoutApi::class
-)
 @Composable
 fun ComicDetailScreen(
     id: Int,
@@ -288,15 +241,15 @@ fun ComicDetailScreen(
     var selectedChapterIds by remember { mutableStateOf<Set<Int>>(emptySet()) }
 
     fun requireLogin(action: () -> Unit) {
-        if (isLogin) {
-            action()
-        } else {
-            mainNavController.navigate("login")
-        }
+        if (isLogin) action() else mainNavController.navigate("login")
     }
 
-    LaunchedEffect(Unit) {
-        if (comicDetailState.data == null) {
+    fun searchTag(tag: String) {
+        mainNavController.navigate("comicSearchResult/${Uri.encode(tag)}")
+    }
+
+    LaunchedEffect(id) {
+        if (comicDetailState.data?.id != id) {
             comicDetailViewModel.getComicDetail(id)
         }
     }
@@ -310,148 +263,55 @@ fun ComicDetailScreen(
         modifier = Modifier.fillMaxSize(),
         bottomBar = {
             val comic = comicDetailState.data ?: return@Scaffold
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .defaultMinSize(minHeight = 80.dp)
-                    .background(MaterialTheme.colorScheme.surfaceContainer)
-                    .padding(10.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row {
-                    IconButton(
-                        onClick = {
-                            requireLogin {
-                                if (!comic.isLike) {
-                                    comicDetailViewModel.likeComic(comic.id)
-                                }
-                            }
-                        }
-                    ) {
-                        if (comic.isLike) {
-                            Icon(
-                                imageVector = Icons.Default.Favorite,
-                                contentDescription = "已喜欢",
-                                tint = Color.Red
-                            )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Default.FavoriteBorder,
-                                contentDescription = "喜欢",
-                            )
-                        }
+            ComicDetailBottomBar(
+                comic = comic,
+                readHistoryManager = readHistoryManager,
+                readHistory = readHistory,
+                onLike = {
+                    requireLogin {
+                        if (!comic.isLike) comicDetailViewModel.likeComic(comic.id)
                     }
-                    IconButton(
-                        onClick = {
-                            requireLogin {
-                                if (comic.isCollect) {
-                                    comicDetailViewModel.unCollect(comic.id)
-                                } else {
-                                    comicDetailViewModel.collect(comic.id)
-                                }
-                            }
-                        },
-                    ) {
+                },
+                onCollect = {
+                    requireLogin {
                         if (comic.isCollect) {
-                            Icon(
-                                imageVector = Icons.Filled.Bookmark,
-                                contentDescription = "收藏",
-                                tint = Color.Yellow
-                            )
+                            comicDetailViewModel.unCollect(comic.id)
+                        } else if (comicDetailViewModel.shouldShowFolderPicker()) {
+                            // 内置 API 模式：弹出收藏夹选择
+                            comicDetailViewModel.refreshFolderList()
+                            comicDetailViewModel.showFolderPicker()
                         } else {
-                            Icon(
-                                imageVector = Icons.Filled.BookmarkBorder,
-                                contentDescription = "收藏",
-                            )
+                            // 网络 API 模式：直接收藏到默认夹
+                            comicDetailViewModel.collect(comic.id)
                         }
                     }
-                    IconButton(
-                        onClick = {
-                            mainNavController.navigate("comicRelate/${comic.id}")
-                        },
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.AutoAwesome,
-                            contentDescription = "相关本子",
-                        )
+                },
+                onRelated = { mainNavController.navigate("comicRelate/${comic.id}") },
+                onDownload = {
+                    if (comic.comicChapterList.isEmpty()) {
+                        downloadManager.downloadComic(comic)
+                    } else {
+                        selectedChapterIds = comic.comicChapterList.map { it.id }.toSet()
+                        showDownloadChapterDialog = true
                     }
-                    IconButton(
-                        onClick = {
-                            if (comic.comicChapterList.isEmpty()) {
-                                downloadManager.downloadComic(comic)
-                            } else {
-                                selectedChapterIds = comic.comicChapterList.map { it.id }.toSet()
-                                showDownloadChapterDialog = true
-                            }
-                        },
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Download,
-                            contentDescription = "缓存",
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.weight(1f))
-                val lastReadChapterId = readHistoryManager.lastReadChapterId(comic, readHistory)
-                if (comic.comicChapterList.isEmpty()) {
-                    Button(onClick = {
-                        mainNavController.navigate("comicRead/${lastReadChapterId ?: comic.id}")
-                    }) {
-                        Text(if (lastReadChapterId != null) "继续阅读" else "开始阅读")
-                    }
-                } else {
-                    Row {
-                        Button(
-                            contentPadding = PaddingValues(horizontal = 16.dp),
-                            onClick = {
-                                mainNavController.navigate("comicChapter/${comic.id}")
-                            },
-                            shape = RoundedCornerShape(
-                                topStart = 25.dp,
-                                bottomStart = 25.dp,
-                                topEnd = 0.dp,
-                                bottomEnd = 0.dp
-                            )
-                        ) {
-                            Text("章节")
-                        }
-                        VerticalDivider(modifier = Modifier.height(40.dp))
-                        Button(
-                            contentPadding = PaddingValues(horizontal = 16.dp),
-                            onClick = {
-                                val targetChapterId = lastReadChapterId
-                                    ?: comic.comicChapterList.firstOrNull()?.id
-                                    ?: comic.id
-                                mainNavController.navigate("comicRead/$targetChapterId")
-                            },
-                            shape = RoundedCornerShape(
-                                topStart = 0.dp,
-                                bottomStart = 0.dp,
-                                topEnd = 25.dp,
-                                bottomEnd = 25.dp
-                            )
-                        ) {
-                            Text(if (lastReadChapterId != null) "继续" else "阅读")
-                        }
-                    }
-                }
-            }
+                },
+                onRead = { targetId -> mainNavController.navigate("comicRead/$targetId") },
+                onChapters = { mainNavController.navigate("comicChapter/${comic.id}") }
+            )
         }
     ) { innerPadding ->
         val comic = comicDetailState.data ?: return@Scaffold
 
         if (showDownloadChapterDialog) {
             ChapterMultiSelectDialog(
-                title = "选择缓存章节",
+                title = "\u9009\u62e9\u7f13\u5b58\u7ae0\u8282",
                 chapters = comic.comicChapterList,
                 selectedChapterIds = selectedChapterIds,
                 onSelectedChange = { selectedChapterIds = it },
                 onDismiss = { showDownloadChapterDialog = false },
-                confirmText = "开始缓存",
+                confirmText = "\u5f00\u59cb\u7f13\u5b58",
                 onConfirm = {
-                    val selectedChapters = comic.comicChapterList
-                        .filter { it.id in selectedChapterIds }
+                    val selectedChapters = comic.comicChapterList.filter { it.id in selectedChapterIds }
                     downloadManager.downloadChapters(comic, selectedChapters)
                     showDownloadChapterDialog = false
                 }
@@ -466,17 +326,14 @@ fun ComicDetailScreen(
             PullToRefreshBox(
                 isRefreshing = comicDetailState.isLoading,
                 state = rememberPullToRefreshState(),
-                onRefresh = {
-                    comicDetailViewModel.getComicDetail(id)
-                },
+                onRefresh = { comicDetailViewModel.getComicDetail(id) },
                 modifier = Modifier.fillMaxSize()
             ) {
                 BoxWithConstraints(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(scrollState),
+                    modifier = Modifier.fillMaxSize(),
                 ) {
                     val isTabletLayout = maxWidth >= 700.dp
+                    val viewportHeight = maxHeight
                     if (isTabletLayout) {
                         Row(
                             modifier = Modifier
@@ -492,28 +349,40 @@ fun ComicDetailScreen(
                                 showIdChip = true
                             )
                             Column(
-                                modifier = Modifier.weight(0.58f),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                                modifier = Modifier
+                                    .weight(0.58f)
+                                    .verticalScroll(scrollState),
+                                verticalArrangement = Arrangement.spacedBy(16.dp)
                             ) {
-                                ComicMetadataContent(comic) {
-                                    mainNavController.navigate("comicSearchResult/$it")
-                                }
+                                ComicMetadataContent(comic, ::searchTag)
+                                ComicCommentArea(
+                                    comicId = comic.id,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(viewportHeight)
+                                )
                             }
                         }
                     } else {
-                        Column {
-                            ComicCoverImage(
-                                comic = comic,
-                                showIdChip = true
-                            )
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(scrollState),
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            ComicCoverImage(comic = comic, showIdChip = true)
                             Column(
                                 modifier = Modifier.padding(horizontal = 10.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                                verticalArrangement = Arrangement.spacedBy(16.dp)
                             ) {
-                                ComicMetadataContent(comic) {
-                                    mainNavController.navigate("comicSearchResult/$it")
-                                }
+                                ComicMetadataContent(comic, ::searchTag)
                             }
+                            ComicCommentArea(
+                                comicId = comic.id,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(viewportHeight)
+                            )
                         }
                     }
                 }
@@ -531,8 +400,151 @@ fun ComicDetailScreen(
                 IconButton(onClick = { mainNavController.popBackStack() }) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "返回详情"
+                        contentDescription = "\u8fd4\u56de"
                     )
+                }
+            }
+        }
+
+        // 收藏夹选择弹窗（仅内置 API 模式）
+        val showFolderPicker by comicDetailViewModel.showFolderPicker.collectAsState()
+        val folderList by comicDetailViewModel.folderList.collectAsState()
+        if (showFolderPicker) {
+            FolderPickerSheet(
+                comicId = comic.id,
+                folderList = folderList,
+                onSelect = { folderId -> comicDetailViewModel.collectWithFolder(comic.id, folderId) },
+                onDismiss = { comicDetailViewModel.hideFolderPicker() }
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FolderPickerSheet(
+    comicId: Int,
+    folderList: Map<String, String>,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState()
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+    ) {
+        Text(
+            text = "\u9009\u62e9\u6536\u85cf\u5939",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
+        )
+        Divider()
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth().fillMaxHeight(0.6f)
+        ) {
+            // "0"（全部）排第一，其余按原序
+            val sortedFolders = linkedMapOf<String, String>().apply {
+                folderList["0"]?.let { put("0", it) }
+                folderList.filterKeys { it != "0" }.forEach { (id, name) -> put(id, name) }
+                if (containsKey("0").not() && folderList.isNotEmpty()) {
+                    put("0", "\u5168\u90e8")
+                }
+            }
+            items(sortedFolders.size) { index ->
+                val entry = sortedFolders.entries.elementAt(index)
+                ListItem(
+                    headlineContent = { Text(entry.value) },
+                    modifier = Modifier.clickable { onSelect(entry.key) }
+                )
+                if (index < sortedFolders.size - 1) {
+                    Divider()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ComicDetailBottomBar(
+    comic: Comic,
+    readHistoryManager: ReadHistoryManager,
+    readHistory: Map<Int, ComicReadHistory>,
+    onLike: () -> Unit,
+    onCollect: () -> Unit,
+    onRelated: () -> Unit,
+    onDownload: () -> Unit,
+    onRead: (Int) -> Unit,
+    onChapters: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .defaultMinSize(minHeight = 80.dp)
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .padding(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row {
+            IconButton(onClick = onLike) {
+                if (comic.isLike) {
+                    Icon(Icons.Default.Favorite, contentDescription = "\u5df2\u559c\u6b22", tint = Color.Red)
+                } else {
+                    Icon(Icons.Default.FavoriteBorder, contentDescription = "\u559c\u6b22")
+                }
+            }
+            IconButton(onClick = onCollect) {
+                if (comic.isCollect) {
+                    Icon(Icons.Filled.Bookmark, contentDescription = "\u5df2\u6536\u85cf", tint = Color.Yellow)
+                } else {
+                    Icon(Icons.Filled.BookmarkBorder, contentDescription = "\u6536\u85cf")
+                }
+            }
+            IconButton(onClick = onRelated) {
+                Icon(Icons.Default.AutoAwesome, contentDescription = "\u76f8\u5173")
+            }
+            IconButton(onClick = onDownload) {
+                Icon(Icons.Default.Download, contentDescription = "\u7f13\u5b58")
+            }
+        }
+        Spacer(modifier = Modifier.weight(1f))
+        val lastReadChapterId = readHistoryManager.lastReadChapterId(comic, readHistory)
+        if (comic.comicChapterList.isEmpty()) {
+            Button(onClick = { onRead(lastReadChapterId ?: comic.id) }) {
+                Text(if (lastReadChapterId != null) "\u7ee7\u7eed\u9605\u8bfb" else "\u5f00\u59cb\u9605\u8bfb")
+            }
+        } else {
+            Row {
+                Button(
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    onClick = onChapters,
+                    shape = RoundedCornerShape(
+                        topStart = 25.dp,
+                        bottomStart = 25.dp,
+                        topEnd = 0.dp,
+                        bottomEnd = 0.dp
+                    )
+                ) {
+                    Text("\u7ae0\u8282")
+                }
+                VerticalDivider(modifier = Modifier.height(40.dp))
+                Button(
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    onClick = {
+                        val targetChapterId = lastReadChapterId
+                            ?: comic.comicChapterList.firstOrNull()?.id
+                            ?: comic.id
+                        onRead(targetChapterId)
+                    },
+                    shape = RoundedCornerShape(
+                        topStart = 0.dp,
+                        bottomStart = 0.dp,
+                        topEnd = 25.dp,
+                        bottomEnd = 25.dp
+                    )
+                ) {
+                    Text(if (lastReadChapterId != null) "\u7ee7\u7eed" else "\u9605\u8bfb")
                 }
             }
         }

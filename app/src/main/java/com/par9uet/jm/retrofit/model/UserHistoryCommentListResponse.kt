@@ -4,21 +4,21 @@ import com.par9uet.jm.data.models.Comment
 import com.par9uet.jm.utils.translateCommentTime
 
 data class UserHistoryCommentListResponse(
-    val list: List<ListItem>,
-    val total: Int,
+    val list: List<ListItem> = emptyList(),
+    val total: Int = 0,
 ) {
     data class ListItem(
-        val AID: String,
-        val BID: String,
-        val CID: String,
-        val UID: String,
-        val username: String,
-        val nickname: String,
-        val likes: String,
-        val gender: String,
-        val update_at: String,
-        val addtime: String,
-        val parent_CID: String,
+        val AID: String? = null,
+        val BID: String? = null,
+        val CID: String? = null,
+        val UID: String? = null,
+        val username: String? = null,
+        val nickname: String? = null,
+        val likes: String? = null,
+        val gender: String? = null,
+        val update_at: String? = null,
+        val addtime: String? = null,
+        val parent_CID: String? = null,
         // 等级相关，这里不写，没啥意义
 //        expinfo: {
 //        level_name: string
@@ -33,29 +33,36 @@ data class UserHistoryCommentListResponse(
 //            id: string
 //        }>
 //    }
-        val name: String,
-        val content: String,
-        val photo: String,
-        val spoiler: String, // 是否剧透 1 和 0
-        val replys: List<ListItem>?
+        val name: String? = null,
+        val content: String? = null,
+        val photo: String? = null,
+        val spoiler: String? = null, // 是否剧透 1 和 0
+        val replys: List<ListItem>? = null
     )
 
     fun toCommentList(): List<Comment> {
         return list.map {
+            val username = it.username.orEmpty()
+            val nickname = it.nickname.orEmpty().ifBlank { username }
             Comment(
-                userId = it.UID.toInt(),
-                comicId = it.AID.toInt(),
-                id = it.CID.toInt(),
-                time = translateCommentTime( it.addtime),
-                content = it.content,
-                likeCount = it.likes.toInt(),
-                username = it.username,
-                nickname = it.nickname,
-                avatar = it.photo,
-                parentId = it.parent_CID.toInt(),
+                userId = it.UID.toIntOrZero(),
+                comicId = it.AID.toIntOrZero(),
+                id = it.CID.toIntOrZero(),
+                time = translateCommentTime(it.addtime.orEmpty()),
+                content = it.content.orEmpty(),
+                likeCount = it.likes.toIntOrZero(),
+                username = username,
+                nickname = nickname,
+                avatar = it.photo.orEmpty(),
+                parentId = it.parent_CID.toIntOrZero(),
                 spoiler = it.spoiler == "1",
-                replyCommentList = listOf()
+                replyCommentList = listOf(),
+                sourceComicName = it.name.orEmpty(),
+                sourceChapterId = it.BID.orEmpty(),
+                sourceBlogId = it.BID.orEmpty()
             )
         }
     }
 }
+
+private fun String?.toIntOrZero(): Int = this?.toIntOrNull() ?: 0

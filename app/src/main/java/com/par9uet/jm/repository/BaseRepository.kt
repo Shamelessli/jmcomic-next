@@ -1,10 +1,10 @@
 package com.par9uet.jm.repository
 
-import android.util.Log
 import coil.network.HttpException
 import com.par9uet.jm.retrofit.model.NetWorkResult
 import com.par9uet.jm.retrofit.model.ResponseWrapper
 import com.par9uet.jm.store.InitManager
+import com.par9uet.jm.utils.logError
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
@@ -17,9 +17,12 @@ open class BaseRepository(
         return try {
             val response = apiCall()
             if (response.code == 200) {
-                NetWorkResult.Success(response.data!!)
+                response.data?.let { NetWorkResult.Success(it) }
+                    ?: NetWorkResult.Error("响应数据为空")
             } else {
-                NetWorkResult.Error(response.errorMsg!!)
+                val errMsg = response.errorMsg ?: "未知错误"
+                logError(this::class.java.simpleName, "API 返回错误: $errMsg")
+                NetWorkResult.Error(errMsg)
             }
         } catch (e: Exception) {
             handleException(e)
@@ -36,7 +39,7 @@ open class BaseRepository(
     }
 
     private fun handleException(e: Exception): NetWorkResult.Error {
-        Log.d("api", e.stackTraceToString())
+        logError(this::class.java.simpleName, "请求异常: ${e.stackTraceToString()}")
         return when (e) {
             is SocketTimeoutException -> NetWorkResult.Error("网络连接超时")
             is ConnectException -> NetWorkResult.Error("网络连接失败")

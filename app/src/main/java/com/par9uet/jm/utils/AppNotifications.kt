@@ -20,10 +20,10 @@ fun ensureAppNotificationChannels(context: Context) {
     val manager = context.getSystemService(NotificationManager::class.java)
     val channel = NotificationChannel(
         DOWNLOAD_NOTIFICATION_CHANNEL_ID,
-        "下载进度",
+        "Download progress",
         NotificationManager.IMPORTANCE_LOW
     ).apply {
-        description = "显示应用更新和漫画缓存下载进度"
+        description = "Shows app update and comic cache download progress"
         setSound(null, null)
     }
     manager.createNotificationChannel(channel)

@@ -1,6 +1,5 @@
 package com.par9uet.jm.ui.screens
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -22,18 +21,20 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Reply
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.ThumbUpOffAlt
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -46,7 +47,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -58,6 +58,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.paging.LoadState
+import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.collectAsLazyPagingItems
 import com.par9uet.jm.data.models.Comment
 import com.par9uet.jm.store.UserManager
@@ -66,8 +67,8 @@ import com.par9uet.jm.ui.components.CommentSkeleton
 import com.par9uet.jm.ui.components.CommonScaffold
 import com.par9uet.jm.ui.components.PullRefreshAndLoadMoreGrid
 import com.par9uet.jm.ui.viewModel.ComicDetailViewModel
-import org.koin.compose.viewmodel.koinActivityViewModel
 import org.koin.compose.getKoin
+import org.koin.compose.viewmodel.koinActivityViewModel
 
 @Composable
 private fun CommentListSkeleton() {
@@ -85,7 +86,7 @@ private fun CommentListSkeleton() {
 }
 
 @Composable
-private fun ReplayComment(comment: Comment) {
+private fun ReplyComment(comment: Comment) {
     val annotatedString = buildAnnotatedString {
         withStyle(
             style = SpanStyle(
@@ -96,17 +97,9 @@ private fun ReplayComment(comment: Comment) {
             append(comment.username)
         }
         append(": ")
-        append(
-            AnnotatedString.fromHtml(
-                htmlString = comment.content,
-            ).trim()
-        )
+        append(AnnotatedString.fromHtml(htmlString = comment.content).trim())
     }
-    Text(
-        text = annotatedString,
-        softWrap = true,
-        fontSize = 12.sp
-    )
+    Text(text = annotatedString, softWrap = true, fontSize = 12.sp)
 }
 
 @Composable
@@ -117,29 +110,25 @@ private fun CommentWithAction(comment: Comment, onReply: (() -> Unit)? = null) {
                 TextButton(
                     modifier = Modifier.height(30.dp),
                     contentPadding = PaddingValues(0.dp),
-                    onClick = {
-                        onReply?.invoke()
-                    }
+                    onClick = { onReply?.invoke() }
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Outlined.Reply,
-                        contentDescription = "",
+                        contentDescription = "\u56de\u590d",
                         modifier = Modifier.size(14.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(text = "回复", fontSize = 12.sp)
+                    Text(text = "\u56de\u590d", fontSize = 12.sp)
                 }
                 Spacer(modifier = Modifier.weight(1f))
                 TextButton(
                     modifier = Modifier.height(30.dp),
                     contentPadding = PaddingValues(0.dp),
-                    onClick = {
-
-                    }
+                    onClick = {}
                 ) {
                     Icon(
                         imageVector = Icons.Default.ThumbUpOffAlt,
-                        contentDescription = "",
+                        contentDescription = "\u70b9\u8d5e",
                         modifier = Modifier.size(14.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
@@ -148,15 +137,11 @@ private fun CommentWithAction(comment: Comment, onReply: (() -> Unit)? = null) {
             }
             if (comment.replyCommentList.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(6.dp))
-                Card(
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                    ) {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
                         comment.replyCommentList.forEach {
                             key(it.id) {
-                                ReplayComment(comment)
+                                ReplyComment(it)
                             }
                         }
                     }
@@ -167,8 +152,10 @@ private fun CommentWithAction(comment: Comment, onReply: (() -> Unit)? = null) {
 }
 
 @Composable
-fun ComicCommentScreen(
+fun ComicCommentArea(
     comicId: Int,
+    modifier: Modifier = Modifier,
+    useScaffold: Boolean = false,
     comicDetailViewModel: ComicDetailViewModel = koinActivityViewModel(),
     userManager: UserManager = getKoin().get(),
 ) {
@@ -177,139 +164,243 @@ fun ComicCommentScreen(
     val isLogin by userManager.isLoginState.collectAsState(false)
     val commentInputFocusRequester = remember { FocusRequester() }
     val commentLazyPagingItems = comicDetailViewModel.commentPager.collectAsLazyPagingItems()
-    var replyComment by remember { mutableStateOf<Comment?>(null) }
-    LaunchedEffect(Unit) {
+    var replyComment by remember(comicId) { mutableStateOf<Comment?>(null) }
+
+    // 评论页独立使用时拉取漫画详情，用于在标题栏显示漫画标题与 JM 编码
+    val comicDetailState by comicDetailViewModel.comicDetailState.collectAsState()
+    LaunchedEffect(comicId) {
         comicDetailViewModel.changeCommentComicId(comicId)
-    }
-    LaunchedEffect(isLogin) {
-        if (!isLogin) {
-            mainNavController.navigate("login")
+        // 仅当当前详情不是该漫画时才拉取
+        if (comicDetailState.data?.id != comicId) {
+            comicDetailViewModel.getComicDetail(comicId)
         }
     }
-    CommonScaffold(
-        title = "评论",
-        bottomBar = {
+
+    val inputBar: @Composable () -> Unit = {
+        CommentInputBar(
+            comicId = comicId,
+            isLogin = isLogin,
+            replyComment = replyComment,
+            onReplyCancel = { replyComment = null },
+            commentLazyPagingItems = commentLazyPagingItems,
+            commentInputFocusRequester = commentInputFocusRequester,
+            comicDetailViewModel = comicDetailViewModel,
+            onLogin = { mainNavController.navigate("login") },
+            onSuccess = {
+                replyComment = null
+                focusManager.clearFocus()
+            }
+        )
+    }
+
+    if (useScaffold) {
+        LaunchedEffect(isLogin) {
             if (!isLogin) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .defaultMinSize(minHeight = 72.dp)
-                        .background(MaterialTheme.colorScheme.surfaceContainer)
-                        .padding(10.dp)
-                        .imePadding(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text(
-                        text = "登录后发表评论",
-                        modifier = Modifier.weight(1f),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Button(onClick = { mainNavController.navigate("login") }) {
-                        Text("登录")
-                    }
-                }
-            } else {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .defaultMinSize(minHeight = 80.dp)
-                        .background(MaterialTheme.colorScheme.surfaceContainer)
-                        .padding(10.dp)
-                        .imePadding(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    val textFieldState = rememberTextFieldState()
-                    val comment = {
-                        comicDetailViewModel.comment(
-                            textFieldState.text.toString(),
-                            comicId,
-                            replyComment?.id
-                        ) {
-                            textFieldState.edit {
-                                replace(0, length, "")
-                            }
-                            focusManager.clearFocus()
-                            commentLazyPagingItems.refresh()
-                        }
-                    }
-                    val commentComicState by comicDetailViewModel.commentComicState.collectAsState()
-                    TextField(
-                        lineLimits = TextFieldLineLimits.SingleLine,
-                        modifier = Modifier
-                            .weight(1f)
-                            .focusRequester(commentInputFocusRequester),
-                        state = textFieldState,
-                        placeholder = {
-                            Text(text = if (replyComment == null) "报告机长，这是我的起飞感想！" else "回复机长 ${replyComment!!.username}")
-                        },
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = Color.Transparent,
-                            unfocusedContainerColor = Color.Transparent,
-                            disabledContainerColor = Color.Transparent,
-                            errorContainerColor = Color.Transparent,
-                            focusedIndicatorColor = Color.Transparent,
-                            unfocusedIndicatorColor = Color.Transparent,
-                            disabledIndicatorColor = Color.Transparent,
-                            errorIndicatorColor = Color.Transparent,
-                            cursorColor = Color.Black
-                        ),
-                        keyboardOptions = KeyboardOptions(
-                            imeAction = ImeAction.Send
-                        ),
-                        onKeyboardAction = {
-                            comment()
-                        }
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    if (replyComment != null) {
-                        IconButton(
-                            onClick = {
-                                replyComment = null
-                            }
-                        ) {
-                            Icon(Icons.Default.Close, contentDescription = "")
-                        }
-                    }
-                    IconButton(
-                        enabled = !commentComicState.isLoading,
-                        onClick = {
-                            comment()
-                        }
-                    ) {
-                        if (commentComicState.isLoading) {
-                            CircularProgressIndicator(
-                                color = ButtonDefaults.buttonColors().disabledContainerColor,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        } else {
-                            Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = "")
-                        }
-                    }
-                }
+                mainNavController.navigate("login")
             }
         }
-    ) {
-        if (commentLazyPagingItems.loadState.refresh is LoadState.Loading && commentLazyPagingItems.itemCount == 0) {
-            CommentListSkeleton()
-            return@CommonScaffold
-        }
-        PullRefreshAndLoadMoreGrid(
-            lazyPagingItems = commentLazyPagingItems,
-            key = { it.id },
-            columns = GridCells.Fixed(1)
-        ) {
-            CommentWithAction(it) {
-                if (isLogin) {
-                    // 强制清楚焦点
+        // 标题：优先显示漫画标题，否则显示"评论"
+        val comicTitle = comicDetailState.data?.let { "${it.name} · JM${it.id}" } ?: "评论"
+        CommonScaffold(title = comicTitle, bottomBar = inputBar) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 10.dp, end = 10.dp, top = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Spacer(modifier = Modifier.weight(1f))
+                IconButton(
+                    onClick = { commentLazyPagingItems.refresh() },
+                    enabled = commentLazyPagingItems.loadState.refresh !is LoadState.Loading
+                ) {
+                    Icon(Icons.Default.Refresh, contentDescription = "\u5237\u65b0\u8bc4\u8bba")
+                }
+            }
+            CommentList(
+                modifier = modifier,
+                commentLazyPagingItems = commentLazyPagingItems,
+                isLogin = isLogin,
+                onLogin = { mainNavController.navigate("login") },
+                onReply = {
                     focusManager.clearFocus()
                     commentInputFocusRequester.requestFocus()
                     replyComment = it
-                } else {
-                    mainNavController.navigate("login")
+                }
+            )
+        }
+    } else {
+        Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    modifier = Modifier.weight(1f),
+                    text = "\u8bc4\u8bba",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                IconButton(
+                    onClick = { commentLazyPagingItems.refresh() },
+                    enabled = commentLazyPagingItems.loadState.refresh !is LoadState.Loading
+                ) {
+                    Icon(Icons.Default.Refresh, contentDescription = "\u5237\u65b0\u8bc4\u8bba")
+                }
+            }
+            HorizontalDivider()
+            CommentList(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                commentLazyPagingItems = commentLazyPagingItems,
+                isLogin = isLogin,
+                onLogin = { mainNavController.navigate("login") },
+                onReply = {
+                    focusManager.clearFocus()
+                    commentInputFocusRequester.requestFocus()
+                    replyComment = it
+                }
+            )
+            inputBar()
+        }
+    }
+}
+
+@Composable
+private fun CommentList(
+    modifier: Modifier = Modifier,
+    commentLazyPagingItems: LazyPagingItems<Comment>,
+    isLogin: Boolean,
+    onLogin: () -> Unit,
+    onReply: (Comment) -> Unit
+) {
+    if (commentLazyPagingItems.loadState.refresh is LoadState.Loading && commentLazyPagingItems.itemCount == 0) {
+        Column(modifier = modifier) {
+            CommentListSkeleton()
+        }
+        return
+    }
+    PullRefreshAndLoadMoreGrid(
+        modifier = modifier,
+        lazyPagingItems = commentLazyPagingItems,
+        key = { it.id },
+        columns = GridCells.Fixed(1),
+        enablePullRefresh = false
+    ) {
+        CommentWithAction(it) {
+            if (isLogin) {
+                onReply(it)
+            } else {
+                onLogin()
+            }
+        }
+    }
+}
+
+@Composable
+private fun CommentInputBar(
+    comicId: Int,
+    isLogin: Boolean,
+    replyComment: Comment?,
+    onReplyCancel: () -> Unit,
+    commentLazyPagingItems: LazyPagingItems<Comment>,
+    commentInputFocusRequester: FocusRequester,
+    comicDetailViewModel: ComicDetailViewModel,
+    onLogin: () -> Unit,
+    onSuccess: () -> Unit,
+) {
+    if (!isLogin) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .imePadding(),
+            tonalElevation = 3.dp,
+            color = MaterialTheme.colorScheme.surfaceContainer
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .defaultMinSize(minHeight = 72.dp)
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "\u767b\u5f55\u540e\u53d1\u8868\u8bc4\u8bba",
+                    modifier = Modifier.weight(1f),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Button(onClick = onLogin) {
+                    Text("\u767b\u5f55")
+                }
+            }
+        }
+    } else {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .imePadding(),
+            tonalElevation = 3.dp,
+            color = MaterialTheme.colorScheme.surfaceContainer
+        ) {
+            val textFieldState = rememberTextFieldState()
+            val commentComicState by comicDetailViewModel.commentComicState.collectAsState()
+            fun comment() {
+                val content = textFieldState.text.toString().trim()
+                if (content.isBlank()) return
+                comicDetailViewModel.comment(content, comicId, replyComment?.id) {
+                    textFieldState.edit {
+                        replace(0, length, "")
+                    }
+                    commentLazyPagingItems.refresh()
+                    onSuccess()
+                }
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .defaultMinSize(minHeight = 80.dp)
+                    .padding(12.dp),
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    lineLimits = TextFieldLineLimits.SingleLine,
+                    modifier = Modifier
+                        .weight(1f)
+                        .focusRequester(commentInputFocusRequester),
+                    state = textFieldState,
+                    placeholder = {
+                        Text(
+                            text = if (replyComment == null) {
+                                "\u53d1\u8868\u8bc4\u8bba"
+                            } else {
+                                "\u56de\u590d ${replyComment.username}"
+                            }
+                        )
+                    },
+                    shape = MaterialTheme.shapes.large,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    onKeyboardAction = { comment() }
+                )
+                if (replyComment != null) {
+                    IconButton(onClick = onReplyCancel) {
+                        Icon(Icons.Default.Close, contentDescription = "\u53d6\u6d88\u56de\u590d")
+                    }
+                }
+                IconButton(enabled = !commentComicState.isLoading, onClick = { comment() }) {
+                    if (commentComicState.isLoading) {
+                        CircularProgressIndicator(
+                            color = ButtonDefaults.buttonColors().disabledContainerColor,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    } else {
+                        Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = "\u53d1\u9001")
+                    }
                 }
             }
         }
     }
+}
+
+@Composable
+fun ComicCommentScreen(comicId: Int) {
+    ComicCommentArea(comicId = comicId, useScaffold = true)
 }

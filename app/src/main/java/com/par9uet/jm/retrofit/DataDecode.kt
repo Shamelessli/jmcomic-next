@@ -113,7 +113,8 @@ fun parseSpeed(htmlStr: String): String {
 }
 
 fun decryptData(str: String): String {
-    val secretKey = SecretKeySpec(API_TOKEN_HASH.toByteArray(Charset.forName("UTF-8")), "AES")
+    val decryptKey = ApiContext.getDataDecryptKey()
+    val secretKey = SecretKeySpec(decryptKey.toByteArray(Charset.forName("UTF-8")), "AES")
 
     // 配置 Cipher
     val cipher = Cipher.getInstance("AES/ECB/PKCS5Padding")

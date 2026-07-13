@@ -29,7 +29,7 @@ class HistorySearchStorage(
                     ?: listOf()
             }
         }
-        return _state.value!!
+        return _state.value ?: listOf()
     }
 
     fun remove() {

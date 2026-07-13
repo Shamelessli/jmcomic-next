@@ -131,7 +131,7 @@ class AppUpdateDownloadManager(
                 if (!response.isSuccessful) {
                     error("下载失败：HTTP ${response.code}")
                 }
-                val body = response.body
+                val body = response.body ?: error("下载失败：响应体为空")
                 val totalBytes = body.contentLength().takeIf { it > 0L } ?: 0L
                 val file = File(getCommonCacheDir(context), "updates/${request.fileName}")
                 file.parentFile?.mkdirs()

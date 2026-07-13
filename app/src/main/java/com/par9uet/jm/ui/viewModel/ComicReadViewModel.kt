@@ -163,6 +163,9 @@ class ComicReadViewModel(
                                     data.data.__scrambleId,
                                     data.data.__speed,
                                     picImageLoader,
+                                    imageFetcher = {
+                                        comicRepository.downloadImageBytes(comicId, index)
+                                    }
                                 )
                             }
                         )

@@ -98,7 +98,7 @@ fun ComicWeekRecommendScreen(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.padding(10.dp)
                 ) {
-                    val typeList = weekDataState.data!!.typeList
+                    val typeList = weekDataState.data?.typeList ?: emptyList()
                     Row(
                         modifier = Modifier
                             .weight(1f)

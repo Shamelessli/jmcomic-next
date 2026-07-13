@@ -20,6 +20,7 @@ interface ComicRepository {
     suspend fun unCollectComic(id: Int): NetWorkResult<CollectComicResponse>
     suspend fun getHomeSwiperComicList(): NetWorkResult<List<HomeSwiperComicListItemResponse>>
     suspend fun getComicPicList(id: Int, shunt: String): NetWorkResult<ComicPicListResponse>
+    suspend fun downloadImageBytes(comicId: Int, imageIndex: Int): ByteArray?
     suspend fun getComicList(
         page: Int,
         order: ComicSearchOrderFilter,
@@ -43,4 +44,9 @@ interface ComicRepository {
         comicId: Int,
         commentId: Int?
     ): NetWorkResult<CommentComicResponse>
+
+    suspend fun createFavoriteFolder(name: String): NetWorkResult<Unit>
+    suspend fun deleteFavoriteFolder(folderId: String): NetWorkResult<Unit>
+    suspend fun renameFavoriteFolder(folderId: String, newName: String): NetWorkResult<Unit>
+    suspend fun moveComicToFolder(comicId: Int, folderId: String): NetWorkResult<Unit>
 }

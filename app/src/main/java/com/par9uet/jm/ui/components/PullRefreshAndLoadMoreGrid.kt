@@ -34,17 +34,13 @@ fun <T : Any> PullRefreshAndLoadMoreGrid(
     horizontalArrangement: Arrangement.HorizontalOrVertical = Arrangement.spacedBy(10.dp),
     contentPadding: PaddingValues = PaddingValues(10.dp),
     itemVisible: (item: T) -> Boolean = { true },
+    enablePullRefresh: Boolean = true,
     itemContent: @Composable ((item: T) -> Unit),
 ) {
     val isRefreshing = lazyPagingItems.loadState.refresh is LoadState.Loading
-    PullToRefreshBox(
-        isRefreshing = isRefreshing,
-        onRefresh = {
-            lazyPagingItems.refresh()
-        },
-        modifier = modifier
-    ) {
+    val gridContent: @Composable () -> Unit = {
         LazyVerticalGrid(
+            modifier = Modifier.fillMaxSize(),
             columns = columns,
             verticalArrangement = verticalArrangement,
             horizontalArrangement = horizontalArrangement,
@@ -61,11 +57,7 @@ fun <T : Any> PullRefreshAndLoadMoreGrid(
             }
             when (val appendState = lazyPagingItems.loadState.append) {
                 is LoadState.Loading -> {
-                    item(
-                        span = {
-                            GridItemSpan(maxLineSpan)
-                        }
-                    ) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
                         Box(
                             Modifier
                                 .fillMaxSize()
@@ -78,20 +70,16 @@ fun <T : Any> PullRefreshAndLoadMoreGrid(
                 }
 
                 is LoadState.Error -> {
-                    item(
-                        span = {
-                            GridItemSpan(maxLineSpan)
-                        }
-                    ) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
                         Column(
                             Modifier
                                 .fillMaxWidth()
                                 .padding(16.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Text("加载失败", color = MaterialTheme.colorScheme.error)
+                            Text("\u52a0\u8f7d\u5931\u8d25", color = MaterialTheme.colorScheme.error)
                             Button(onClick = { lazyPagingItems.retry() }) {
-                                Text("重试")
+                                Text("\u91cd\u8bd5")
                             }
                         }
                     }
@@ -99,11 +87,7 @@ fun <T : Any> PullRefreshAndLoadMoreGrid(
 
                 is LoadState.NotLoading -> {
                     if (appendState.endOfPaginationReached) {
-                        item(
-                            span = {
-                                GridItemSpan(maxLineSpan)
-                            }
-                        ) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
                             Box(
                                 Modifier
                                     .fillMaxWidth()
@@ -111,7 +95,7 @@ fun <T : Any> PullRefreshAndLoadMoreGrid(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    "—— 没有更多数据了 ——",
+                                    "\u6ca1\u6709\u66f4\u591a\u6570\u636e\u4e86",
                                     style = MaterialTheme.typography.bodySmall
                                 )
                             }
@@ -119,6 +103,21 @@ fun <T : Any> PullRefreshAndLoadMoreGrid(
                     }
                 }
             }
+        }
+    }
+    if (enablePullRefresh) {
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = {
+                lazyPagingItems.refresh()
+            },
+            modifier = modifier
+        ) {
+            gridContent()
+        }
+    } else {
+        Box(modifier = modifier) {
+            gridContent()
         }
     }
 }

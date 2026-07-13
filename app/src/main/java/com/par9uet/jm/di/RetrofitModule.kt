@@ -32,7 +32,7 @@ val retrofitModule = module {
     single<RemoteSettingService> { get<Retrofit>().createService(RemoteSettingService::class.java) }
     single<UserService> { get<Retrofit>().createService(UserService::class.java) }
     single { BaseUrlInterceptor(get()) }
-    single { TokenInterceptor() }
+    single { TokenInterceptor(get()) }
     single { InitInterceptor(get()) }
     single { ToastInterceptor(get()) }
     single { ResponseConverterFactory(get()) }

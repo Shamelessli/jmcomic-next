@@ -153,4 +153,34 @@ class DownloadManager(
             workManager.enqueue(downloadRequest)
         }
     }
+
+    fun retryDownload(comicId: Int) {
+        scope.launch(Dispatchers.IO) {
+            val task = downloadComicDao.getById(comicId) ?: return@launch
+            downloadComicDao.updateProgress(
+                com.par9uet.jm.database.model.UpdateComicProgress(comicId, 0f)
+            )
+            downloadComicDao.updateStatus(
+                com.par9uet.jm.database.model.UpdateComicStatus(comicId, "pending")
+            )
+            enqueueDownload(comicId)
+            toastManager.showAsync("已重新加入下载队列")
+        }
+    }
+
+    fun retryGroup(groupId: Int) {
+        scope.launch(Dispatchers.IO) {
+            val chapters = downloadComicDao.getByGroupId(groupId)
+            val errorIds = chapters.filter { it.status == "error" }.map { it.id }
+            if (errorIds.isEmpty()) return@launch
+            downloadComicDao.updateStatusByIds(errorIds, "pending")
+            errorIds.forEach { id ->
+                downloadComicDao.updateProgress(
+                    com.par9uet.jm.database.model.UpdateComicProgress(id, 0f)
+                )
+            }
+            enqueueDownloads(errorIds)
+            toastManager.showAsync("已重新加入 ${errorIds.size} 个下载任务")
+        }
+    }
 }

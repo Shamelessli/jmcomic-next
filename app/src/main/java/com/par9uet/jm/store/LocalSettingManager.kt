@@ -6,9 +6,9 @@ import com.par9uet.jm.storage.LocalSettingStorage
 import com.par9uet.jm.task.AppInitTask
 import com.par9uet.jm.task.AppTaskInfo
 import com.par9uet.jm.utils.LauncherDisguiseApplier
+import com.par9uet.jm.utils.log
 import com.par9uet.jm.utils.normalizeBlockedTag
 import com.par9uet.jm.utils.normalizeBlockedTagList
-import com.par9uet.jm.utils.log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -20,163 +20,120 @@ class LocalSettingManager(
     private val _localSettingState = MutableStateFlow(LocalSetting())
     val localSettingState = _localSettingState.asStateFlow()
 
-    fun updateApi(api: String) {
-        _localSettingState.update {
-            it.copy(
-                api = api
-            )
-        }
-        localSettingStorage.set(_localSettingState.value)
-    }
+    fun updateComicApiSource(comicApiSource: String) =
+        updateSetting { it.copy(comicApiSource = comicApiSource) }
 
-    fun updateTheme(theme: String) {
-        _localSettingState.update {
-            it.copy(
-                theme = theme
-            )
-        }
-        localSettingStorage.set(_localSettingState.value)
-    }
+    fun updatePreferenceRecommendEnabled(enabled: Boolean) =
+        updateSetting { it.copy(preferenceRecommendEnabled = enabled) }
 
-    fun updateShunt(shunt: String) {
-        _localSettingState.update {
-            it.copy(
-                shunt = shunt
-            )
-        }
-        localSettingStorage.set(_localSettingState.value)
-    }
+    fun updateOnboardingCompleted(completed: Boolean) =
+        updateSetting { it.copy(onboardingCompleted = completed) }
 
-    fun updatePrefetchCount(prefetchCount: String) {
-        _localSettingState.update {
-            it.copy(
-                prefetchCount = prefetchCount.toInt()
-            )
-        }
-        localSettingStorage.set(_localSettingState.value)
-    }
+    fun updateClipboardAutoDetectEnabled(enabled: Boolean) =
+        updateSetting { it.copy(clipboardAutoDetectEnabled = enabled) }
 
-    fun updateReadMode(readMode: String) {
-        _localSettingState.update {
-            it.copy(
-                readMode = readMode
-            )
-        }
-        localSettingStorage.set(_localSettingState.value)
-    }
+    fun updateApi(api: String) = updateSetting { it.copy(api = api) }
 
-    fun closeShowComicScrollReadTip() {
-        _localSettingState.update {
-            it.copy(
-                showComicScrollReadTip = false
-            )
-        }
-        localSettingStorage.set(_localSettingState.value)
-    }
+    fun updateTheme(theme: String) = updateSetting { it.copy(theme = theme) }
 
-    fun closeShowComicPageReadTip() {
-        _localSettingState.update {
-            it.copy(
-                showComicPageReadTip = false
-            )
-        }
-        localSettingStorage.set(_localSettingState.value)
-    }
+    fun updateShunt(shunt: String) = updateSetting { it.copy(shunt = shunt) }
 
-    fun updateReadTapMode(readTapMode: String) {
-        _localSettingState.update {
-            it.copy(
-                readTapMode = readTapMode
-            )
-        }
-        localSettingStorage.set(_localSettingState.value)
-    }
+    fun updatePrefetchCount(prefetchCount: String) =
+        updateSetting { it.copy(prefetchCount = prefetchCount.toInt()) }
+
+    fun updateReadMode(readMode: String) = updateSetting { it.copy(readMode = readMode) }
+
+    fun closeShowComicScrollReadTip() =
+        updateSetting { it.copy(showComicScrollReadTip = false) }
+
+    fun closeShowComicPageReadTip() =
+        updateSetting { it.copy(showComicPageReadTip = false) }
+
+    fun updateReadTapMode(readTapMode: String) =
+        updateSetting { it.copy(readTapMode = readTapMode) }
 
     fun updateLauncherDisguise(launcherDisguise: String) {
         val disguise = LauncherDisguise.fromId(launcherDisguise)
-        _localSettingState.update {
-            it.copy(
-                launcherDisguise = disguise.id
-            )
-        }
-        localSettingStorage.set(_localSettingState.value)
+        updateSetting { it.copy(launcherDisguise = disguise.id) }
         launcherDisguiseApplier.apply(disguise)
     }
 
-    fun updateNotificationSettings(show: Boolean, showName: Boolean) {
-        _localSettingState.update {
+    fun updateNotificationSettings(show: Boolean, showName: Boolean) =
+        updateSetting {
             it.copy(
                 showComicCacheNotification = show,
                 showComicCacheNotificationName = show && showName
             )
         }
-        localSettingStorage.set(_localSettingState.value)
-    }
 
-    fun updateShowComicCacheNotification(show: Boolean) {
-        _localSettingState.update {
-            it.copy(
-                showComicCacheNotification = show
-            )
-        }
-        localSettingStorage.set(_localSettingState.value)
-    }
+    fun updateShowComicCacheNotification(show: Boolean) =
+        updateSetting { it.copy(showComicCacheNotification = show) }
 
-    fun updateShowComicCacheNotificationName(show: Boolean) {
-        _localSettingState.update {
-            it.copy(
-                showComicCacheNotificationName = show
-            )
-        }
-        localSettingStorage.set(_localSettingState.value)
-    }
+    fun updateShowComicCacheNotificationName(show: Boolean) =
+        updateSetting { it.copy(showComicCacheNotificationName = show) }
+
+    fun updateShowAiEntry(show: Boolean) =
+        updateSetting { it.copy(showAiEntry = show) }
 
     fun addBlockedTag(tag: String) {
         val normalizedTag = normalizeBlockedTag(tag)
         if (normalizedTag.isBlank()) return
-        _localSettingState.update {
+        updateSetting {
             it.copy(
                 blockedTagList = normalizeBlockedTagList(it.blockedTagList + normalizedTag)
             )
         }
-        localSettingStorage.set(_localSettingState.value)
     }
 
-    fun replaceBlockedTags(tags: List<String>) {
-        _localSettingState.update {
-            it.copy(
-                blockedTagList = normalizeBlockedTagList(tags)
-            )
-        }
-        localSettingStorage.set(_localSettingState.value)
-    }
+    fun replaceBlockedTags(tags: List<String>) =
+        updateSetting { it.copy(blockedTagList = normalizeBlockedTagList(tags)) }
 
     fun removeBlockedTag(tag: String) {
         val normalizedTag = normalizeBlockedTag(tag)
-        _localSettingState.update {
+        updateSetting {
             it.copy(
                 blockedTagList = it.blockedTagList.filterNot { item ->
                     item.equals(normalizedTag, ignoreCase = true)
                 }
             )
         }
+    }
+
+    fun updateAppLockEnabled(enabled: Boolean) =
+        updateSetting { it.copy(appLockEnabled = enabled) }
+
+    fun updateAppLockPassword(pwd: String) =
+        updateSetting { it.copy(appLockPassword = pwd) }
+
+    fun updateAppLockPasswordLength(len: Int) =
+        updateSetting { it.copy(appLockPasswordLength = len.coerceIn(4, 8)) }
+
+    fun updateAppLockPattern(pattern: String) =
+        updateSetting { it.copy(appLockPattern = pattern) }
+
+    fun updateAppLockUnlockMode(mode: String) =
+        updateSetting { it.copy(appLockUnlockMode = mode) }
+
+    fun dismissNsfwWarning() =
+        updateSetting { it.copy(nsfwWarningDismissed = true) }
+
+    private fun updateSetting(update: (LocalSetting) -> LocalSetting) {
+        _localSettingState.update(update)
         localSettingStorage.set(_localSettingState.value)
     }
 
     private var appTaskInfo = AppTaskInfo(
-        taskName = "加载本地 APP 设置",
+        taskName = "load local app settings",
         sort = 3,
     )
 
     override suspend fun init() {
-        log("本地应用设置开始初始化")
-        log("加载本地应用设置")
+        log("local app settings init start")
         _localSettingState.update {
             localSettingStorage.get()
         }
         launcherDisguiseApplier.apply(LauncherDisguise.fromId(_localSettingState.value.launcherDisguise))
-        log("已加载本地应用设置")
-        log("本地应用设置初始化结束")
+        log("local app settings init finished")
     }
 
     override fun getAppTaskInfo(): AppTaskInfo = appTaskInfo

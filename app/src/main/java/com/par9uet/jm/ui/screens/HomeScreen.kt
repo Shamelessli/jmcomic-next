@@ -16,15 +16,17 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Password
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.FilterChip
@@ -48,11 +50,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.par9uet.jm.store.LocalSettingManager
+import com.par9uet.jm.store.UserManager
 import com.par9uet.jm.ui.components.Comic
 import com.par9uet.jm.ui.components.ComicSkeleton
 import com.par9uet.jm.ui.components.TabSkeleton
-import com.par9uet.jm.store.LocalSettingManager
-import com.par9uet.jm.store.UserManager
 import com.par9uet.jm.ui.components.adaptiveComicGridCells
 import com.par9uet.jm.ui.state.rememberTabIndexState
 import com.par9uet.jm.ui.viewModel.ComicViewModel
@@ -61,14 +63,40 @@ import org.koin.compose.getKoin
 import org.koin.compose.viewmodel.koinActivityViewModel
 import kotlin.math.abs
 
+private const val TEXT_DISCOVER = "\u53d1\u73b0\u6f2b\u753b"
+private const val TEXT_FEATURED = "\u7cbe\u9009\u63a8\u8350"
+private const val TEXT_SEARCH_HINT = "\u641c\u7d22\u4f5c\u54c1\u3001\u4f5c\u8005\u6216 tag"
+private const val TEXT_WEEKLY = "\u6bcf\u5468"
+private const val TEXT_DOWNLOAD = "\u4e0b\u8f7d"
+private const val TEXT_SIGN = "\u7b7e\u5230"
+private const val TEXT_EXTRACT = "\u63d0\u53d6"
+
 @Composable
-private fun HomeSkeleton() {
+private fun HomeSkeleton(
+    onSearch: () -> Unit,
+    onDownload: () -> Unit,
+    onRecommend: () -> Unit,
+    onExtract: () -> Unit,
+    onSign: () -> Unit
+) {
     val fakeTabSize = 6
-    Column {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        HomeHeader(
+            categoryTitle = "",
+            onSearch = onSearch,
+            onDownload = onDownload,
+            onRecommend = onRecommend,
+            onExtract = onExtract,
+            onSign = onSign
+        )
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp)
                 .height(48.dp)
                 .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(20.dp),
@@ -84,7 +112,6 @@ private fun HomeSkeleton() {
         FlowRow(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(10.dp)
                 .weight(1f)
                 .verticalScroll(rememberScrollState()),
             maxItemsInEachRow = 3,
@@ -93,9 +120,7 @@ private fun HomeSkeleton() {
         ) {
             for (i in 0 until 18) {
                 key(i) {
-                    ComicSkeleton(
-                        modifier = Modifier.weight(1f)
-                    )
+                    ComicSkeleton(modifier = Modifier.weight(1f))
                 }
             }
         }
@@ -112,14 +137,30 @@ fun HomeScreen(
     val homeComicState by comicViewModel.homeComicState.collectAsState()
     val isLogin by userManager.isLoginState.collectAsState(false)
     val localSetting by localSettingManager.localSettingState.collectAsState()
-    LaunchedEffect(Unit) {
-        if (homeComicState.list.isNotEmpty()) {
-            return@LaunchedEffect
+    val onSearch = { mainNavController.navigate("comicSearch") }
+    val onDownload = { mainNavController.navigate("download") }
+    val onRecommend = { mainNavController.navigate("comicRecommend") }
+    val onExtract = { mainNavController.navigate("extractCode") }
+    val onSign = {
+        if (isLogin) {
+            mainNavController.navigate("sign")
+        } else {
+            mainNavController.navigate("login")
         }
+    }
+
+    LaunchedEffect(localSetting.comicApiSource) {
         comicViewModel.getHomeComic()
     }
+
     if (homeComicState.list.isEmpty() && homeComicState.isLoading) {
-        HomeSkeleton()
+        HomeSkeleton(
+            onSearch = onSearch,
+            onDownload = onDownload,
+            onRecommend = onRecommend,
+            onExtract = onExtract,
+            onSign = onSign
+        )
         return
     }
 
@@ -127,6 +168,7 @@ fun HomeScreen(
     val onTabClick: (index: Int) -> Unit = {
         selectedTabIndexState.value = it.coerceIn(0, (homeComicState.list.size - 1).coerceAtLeast(0))
     }
+
     Column(modifier = Modifier.fillMaxSize()) {
         val currentPageData = homeComicState.list.getOrNull(selectedTabIndexState.value)
         val comicList = remember(currentPageData, localSetting.blockedTagList) {
@@ -135,9 +177,7 @@ fun HomeScreen(
         PullToRefreshBox(
             modifier = Modifier.fillMaxSize(),
             isRefreshing = homeComicState.isLoading,
-            onRefresh = {
-                comicViewModel.getHomeComic()
-            }
+            onRefresh = { comicViewModel.getHomeComic() }
         ) {
             LazyVerticalGrid(
                 modifier = Modifier
@@ -173,16 +213,11 @@ fun HomeScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         HomeHeader(
                             categoryTitle = currentPageData?.title.orEmpty(),
-                            onSearch = { mainNavController.navigate("comicSearch") },
-                            onDownload = { mainNavController.navigate("download") },
-                            onRecommend = { mainNavController.navigate("comicRecommend") },
-                            onSign = {
-                                if (isLogin) {
-                                    mainNavController.navigate("sign")
-                                } else {
-                                    mainNavController.navigate("login")
-                                }
-                            }
+                            onSearch = onSearch,
+                            onDownload = onDownload,
+                            onRecommend = onRecommend,
+                            onExtract = onExtract,
+                            onSign = onSign
                         )
                         HomeCategoryChips(
                             categories = homeComicState.list.map { it.title },
@@ -191,10 +226,7 @@ fun HomeScreen(
                         )
                     }
                 }
-                items(
-                    items = comicList,
-                    key = { it.id },
-                ) {
+                items(items = comicList, key = { it.id }) {
                     Comic(it)
                 }
             }
@@ -208,32 +240,27 @@ private fun HomeHeader(
     onSearch: () -> Unit,
     onDownload: () -> Unit,
     onRecommend: () -> Unit,
+    onExtract: () -> Unit,
     onSign: () -> Unit
 ) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(22.dp)),
+                .clip(MaterialTheme.shapes.extraLarge),
             color = MaterialTheme.colorScheme.primaryContainer,
             contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
             tonalElevation = 2.dp
         ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        text = "发现漫画",
+                        text = TEXT_DISCOVER,
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = categoryTitle.ifBlank { "精选推荐" },
+                        text = categoryTitle.ifBlank { TEXT_FEATURED },
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f),
                         maxLines = 1,
@@ -244,7 +271,7 @@ private fun HomeHeader(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(50.dp)
-                        .clip(RoundedCornerShape(18.dp))
+                        .clip(MaterialTheme.shapes.large)
                         .clickable(onClick = onSearch),
                     color = MaterialTheme.colorScheme.surface,
                     contentColor = MaterialTheme.colorScheme.onSurface
@@ -261,7 +288,7 @@ private fun HomeHeader(
                         )
                         Text(
                             modifier = Modifier.weight(1f),
-                            text = "搜索作品、作者或 tag",
+                            text = TEXT_SEARCH_HINT,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -270,26 +297,29 @@ private fun HomeHeader(
                 }
             }
         }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             HomeQuickAction(
                 modifier = Modifier.weight(1f),
                 icon = Icons.Default.Star,
-                label = "每周",
+                label = TEXT_WEEKLY,
                 onClick = onRecommend
             )
             HomeQuickAction(
                 modifier = Modifier.weight(1f),
+                icon = Icons.Default.Password,
+                label = TEXT_EXTRACT,
+                onClick = onExtract
+            )
+            HomeQuickAction(
+                modifier = Modifier.weight(1f),
                 icon = Icons.Default.Download,
-                label = "下载",
+                label = TEXT_DOWNLOAD,
                 onClick = onDownload
             )
             HomeQuickAction(
                 modifier = Modifier.weight(1f),
                 icon = Icons.Default.CalendarMonth,
-                label = "签到",
+                label = TEXT_SIGN,
                 onClick = onSign
             )
         }
@@ -302,18 +332,24 @@ private fun HomeCategoryChips(
     selectedIndex: Int,
     onSelect: (Int) -> Unit
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
+    val listState = rememberLazyListState()
+    LaunchedEffect(selectedIndex, categories.size) {
+        if (categories.isNotEmpty()) {
+            listState.animateScrollToItem(selectedIndex.coerceIn(0, categories.lastIndex))
+        }
+    }
+    LazyRow(
+        state = listState,
+        modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        categories.forEachIndexed { index, title ->
+        items(categories.size) { index ->
+            val title = categories[index]
             key(title) {
                 FilterChip(
                     selected = selectedIndex == index,
                     onClick = { onSelect(index) },
-                    shape = RoundedCornerShape(18.dp),
+                    shape = MaterialTheme.shapes.large,
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.primary,
                         selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
@@ -345,7 +381,7 @@ private fun HomeQuickAction(
         modifier = modifier
             .height(46.dp)
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(16.dp),
+        shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.secondaryContainer,
         contentColor = MaterialTheme.colorScheme.onSecondaryContainer
     ) {
@@ -354,11 +390,7 @@ private fun HomeQuickAction(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp)
-            )
+            Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
             Text(
                 text = label,

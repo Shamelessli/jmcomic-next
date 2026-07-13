@@ -15,11 +15,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import coil.ImageLoader
 import coil.compose.AsyncImage
 import com.par9uet.jm.data.models.Comic
 import com.par9uet.jm.store.RemoteSettingManager
+import com.par9uet.jm.store.ToastManager
 import org.koin.compose.getKoin
 
 @Composable
@@ -28,9 +31,11 @@ fun ComicCoverImage(
     modifier: Modifier = Modifier.fillMaxWidth(),
     showIdChip: Boolean = false,
     remoteSettingManager: RemoteSettingManager = getKoin().get(),
-    imageLoader: ImageLoader = getKoin().get()
+    imageLoader: ImageLoader = getKoin().get(),
+    toastManager: ToastManager = getKoin().get(),
 ) {
     val remoteSetting by remoteSettingManager.remoteSettingState.collectAsState()
+    val clipboardManager = LocalClipboardManager.current
     Box(modifier = modifier) {
         AsyncImage(
             model = "${remoteSetting.imgHost}/media/albums/${comic.id}_3x4.jpg",
@@ -52,7 +57,11 @@ fun ComicCoverImage(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(end = 10.dp, top = 10.dp),
-                onClick = {},
+                onClick = {
+                    // 点击复制漫画数字码
+                    clipboardManager.setText(AnnotatedString(comic.id.toString()))
+                    toastManager.showAsync("已复制漫画编码：${comic.id}")
+                },
                 label = {
                     Text("JM${comic.id}")
                 }

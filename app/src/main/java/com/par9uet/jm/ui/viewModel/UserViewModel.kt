@@ -7,6 +7,7 @@ import androidx.paging.PagingConfig
 import androidx.paging.cachedIn
 import com.par9uet.jm.data.models.CollectComicOrderFilter
 import com.par9uet.jm.data.models.SignInData
+import com.par9uet.jm.repository.ComicRepository
 import com.par9uet.jm.repository.UserRepository
 import com.par9uet.jm.retrofit.model.LoginResponse
 import com.par9uet.jm.retrofit.model.NetWorkResult
@@ -33,11 +34,19 @@ data class CollectComicLocalFilter(
     val selectedTags: Set<String> = emptySet()
 )
 
+private data class CollectPagerKey(
+    val order: CollectComicOrderFilter,
+    val blockedTagList: List<String>,
+    val filter: CollectComicLocalFilter,
+    val folderId: Int
+)
+
 class UserViewModel(
     private val userManager: UserManager,
     private val userRepository: UserRepository,
     private val toastManager: ToastManager,
     private val localSettingManager: LocalSettingManager,
+    private val comicRepository: ComicRepository,
 ) : ViewModel() {
     private val _loginState = MutableStateFlow(CommonUIState(data = null))
     val loginState = _loginState.asStateFlow()
@@ -88,24 +97,30 @@ class UserViewModel(
     val collectComicFilter = _collectComicFilter.asStateFlow()
     private val _collectTagCounts = MutableStateFlow<Map<String, Int>>(emptyMap())
     val collectTagCounts = _collectTagCounts.asStateFlow()
+    private val _selectedFolderId = MutableStateFlow(0)
+    val selectedFolderId = _selectedFolderId.asStateFlow()
+    private val _folderList = MutableStateFlow<Map<String, String>>(emptyMap())
+    val folderList = _folderList.asStateFlow()
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val collectComicPager = combine(
         _collectComicOrder,
         localSettingManager.localSettingState,
-        _collectComicFilter
-    ) { order, localSetting, filter ->
-        Triple(order, localSetting.blockedTagList, filter)
-    }.flatMapLatest { (order, blockedTagList, filter) ->
+        _collectComicFilter,
+        _selectedFolderId
+    ) { order, localSetting, filter, folderId ->
+        CollectPagerKey(order, localSetting.blockedTagList, filter, folderId)
+    }.flatMapLatest { key ->
         Pager(
             config = PagingConfig(pageSize = 20, prefetchDistance = 6, initialLoadSize = 20),
             pagingSourceFactory = {
                 CollectComicPagingSource(
                     userRepository,
-                    order,
-                    blockedTagList,
-                    filter.searchText,
-                    filter.selectedTags
+                    key.order,
+                    key.blockedTagList,
+                    key.filter.searchText,
+                    key.filter.selectedTags,
+                    key.folderId
                 )
             }
         ).flow
@@ -126,16 +141,73 @@ class UserViewModel(
         _collectComicFilter.update { it.copy(selectedTags = tags) }
     }
 
+    fun changeFolder(folderId: Int) {
+        _selectedFolderId.update { folderId }
+    }
+
+    fun refreshFolderList() {
+        viewModelScope.launch {
+            val order = _collectComicOrder.value
+            when (val data = userRepository.getCollectComicList(1, order, 0)) {
+                is NetWorkResult.Error -> {
+                    // 文件夹列表为可选功能，错误时忽略
+                }
+
+                is NetWorkResult.Success -> {
+                    _folderList.value = data.data.folder_list ?: emptyMap()
+                }
+            }
+        }
+    }
+
+    fun createFolder(name: String) {
+        viewModelScope.launch {
+            when (val data = comicRepository.createFavoriteFolder(name)) {
+                is NetWorkResult.Error -> toastManager.showAsync(data.message)
+                is NetWorkResult.Success -> {
+                    refreshFolderList()
+                    toastManager.showAsync("创建成功")
+                }
+            }
+        }
+    }
+
+    fun deleteFolder(folderId: String) {
+        viewModelScope.launch {
+            when (val data = comicRepository.deleteFavoriteFolder(folderId)) {
+                is NetWorkResult.Error -> toastManager.showAsync(data.message)
+                is NetWorkResult.Success -> {
+                    _selectedFolderId.update { 0 }
+                    refreshFolderList()
+                    toastManager.showAsync("删除成功")
+                }
+            }
+        }
+    }
+
+    fun renameFolder(folderId: String, newName: String) {
+        viewModelScope.launch {
+            when (val data = comicRepository.renameFavoriteFolder(folderId, newName)) {
+                is NetWorkResult.Error -> toastManager.showAsync(data.message)
+                is NetWorkResult.Success -> {
+                    refreshFolderList()
+                    toastManager.showAsync("重命名成功")
+                }
+            }
+        }
+    }
+
     fun refreshCollectTagCounts() {
         viewModelScope.launch {
             val blockedTagList = localSettingManager.localSettingState.value.blockedTagList
             val order = _collectComicOrder.value
+            val folderId = _selectedFolderId.value
             val counts = mutableMapOf<String, Int>()
             var page = 1
             var loaded = 0
             var total = Int.MAX_VALUE
             while (loaded < total && page <= 100) {
-                when (val data = userRepository.getCollectComicList(page, order)) {
+                when (val data = userRepository.getCollectComicList(page, order, folderId)) {
                     is NetWorkResult.Error -> {
                         toastManager.showAsync(data.message)
                         return@launch
@@ -175,7 +247,7 @@ class UserViewModel(
         pagingSourceFactory = {
             HistoryCommentPagingSource(
                 userRepository,
-                userManager.userState.value.data!!.id
+                userManager.userState.value.data?.id ?: 0
             )
         }
     ).flow.cachedIn(viewModelScope)
@@ -195,7 +267,7 @@ class UserViewModel(
                     errorMsg = ""
                 )
             }
-            when (val data = userRepository.getSignData(userManager.userState.value.data!!.id)) {
+            when (val data = userRepository.getSignData(userManager.userState.value.data?.id ?: 0)) {
                 is NetWorkResult.Error -> {
                     _signInDataState.update {
                         it.copy(
@@ -233,8 +305,8 @@ class UserViewModel(
                 )
             }
             when (val data = userRepository.signIn(
-                userManager.userState.value.data!!.id,
-                _signInDataState.value.data!!.dailyId
+                userManager.userState.value.data?.id ?: 0,
+                _signInDataState.value.data?.dailyId ?: 0
             )) {
                 is NetWorkResult.Error -> {
                     _signInState.update {

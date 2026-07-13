@@ -14,11 +14,16 @@ class GlobalViewModel(
 
     fun init() {
         viewModelScope.launch {
-            appInitTaskList.sortedBy { it.getAppTaskInfo().sort }.forEach { it.init() }
-            if (appInitTaskList.any { it.getAppTaskInfo().isError }) {
-                // TODO fix
+            // 任一任务异常不能阻塞 deferred 完成，否则会导致永久黑屏
+            appInitTaskList.sortedBy { it.getAppTaskInfo().sort }.forEach { task ->
+                runCatching { task.init() }
+                    .onFailure { e ->
+                        log("初始化任务 ${task.getAppTaskInfo().taskName} 失败：${e.message}")
+                    }
             }
-            initManager.deferred.complete("")
+            if (!initManager.deferred.isCompleted) {
+                initManager.deferred.complete("")
+            }
             log("完成全局初始化")
         }
     }

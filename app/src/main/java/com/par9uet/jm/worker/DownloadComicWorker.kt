@@ -27,6 +27,7 @@ import com.par9uet.jm.store.DownloadToastAggregator
 import com.par9uet.jm.store.LocalSettingManager
 import com.par9uet.jm.store.RemoteSettingManager
 import com.par9uet.jm.utils.COMIC_CACHE_NOTIFICATION_ID_BASE
+import com.par9uet.jm.utils.DownloadSpeedTracker
 import com.par9uet.jm.utils.cancelProgressNotification
 import com.par9uet.jm.utils.compressWebpCompat
 import com.par9uet.jm.utils.showProgressNotification
@@ -57,10 +58,14 @@ class DownloadComicWorker(
             return Result.failure()
         }
 
+        val coverOwnerId = downloadComicDao.getById(comicId)?.let {
+            it.groupId.takeIf { g -> g != 0 } ?: comicId
+        } ?: comicId
+
         return try {
             val downloadTask = downloadComicDao.getById(comicId) ?: return Result.failure()
-            val coverOwnerId = downloadTask.groupId.takeIf { it != 0 } ?: comicId
             downloadComicDao.updateStatus(UpdateComicStatus(comicId, "downloading"))
+            DownloadSpeedTracker.startTracking(coverOwnerId)
             showComicCacheNotification(
                 downloadTask,
                 resolveGroupProgress(downloadTask, downloadTask.progress)
@@ -76,6 +81,7 @@ class DownloadComicWorker(
             downloadComicDao.updateZipPath(UpdateComicZipPath(comicId, chapterDirPath))
             downloadComicDao.updateStatus(UpdateComicStatus(comicId, "complete"))
             writeCacheConfig(comicId)
+            DownloadSpeedTracker.stopTracking(coverOwnerId)
             cancelComicCacheNotificationIfIdle(downloadTask)
             downloadToastAggregator.report(batchId, batchTotal, comicId, success = true)
             Result.success()
@@ -84,6 +90,7 @@ class DownloadComicWorker(
                 Result.retry()
             } else {
                 downloadComicDao.updateStatus(UpdateComicStatus(comicId, "error"))
+                DownloadSpeedTracker.stopTracking(coverOwnerId)
                 downloadComicDao.getById(comicId)?.let {
                     cancelComicCacheNotificationIfIdle(it)
                 }
@@ -166,6 +173,7 @@ class DownloadComicWorker(
                                 FileOutputStream(file).use { out ->
                                     result.decodeImageBitmap.asAndroidBitmap().compressWebpCompat(50, out)
                                 }
+                                DownloadSpeedTracker.addBytes(downloadTask.groupId.takeIf { it != 0 } ?: downloadTask.id, file.length())
                                 val progress = updateChapterProgressIfAdvanced(
                                     downloadTask = downloadTask,
                                     currentMaxProgress = maxProgress,

@@ -1,5 +1,6 @@
 package com.par9uet.jm.storage
 
+import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -19,6 +20,9 @@ class CryptoManager {
 
     private val keyAlias = "app_master_key"
     private val keyStore: KeyStore? = runCatching {
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.M) {
+            return@runCatching null
+        }
         KeyStore.getInstance("AndroidKeyStore").apply {
             load(null)
         }
@@ -54,6 +58,9 @@ class CryptoManager {
     }
 
     fun encrypt(data: String): String {
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.M) {
+            return encodePlain(data)
+        }
         val encryptedData = runCatching {
             val key = getSecretKey() ?: return@runCatching null
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
@@ -66,6 +73,10 @@ class CryptoManager {
             return encryptedData
         }
 
+        return encodePlain(data)
+    }
+
+    private fun encodePlain(data: String): String {
         return PLAIN_PREFIX + Base64.encodeToString(
             data.toByteArray(StandardCharsets.UTF_8),
             Base64.NO_WRAP

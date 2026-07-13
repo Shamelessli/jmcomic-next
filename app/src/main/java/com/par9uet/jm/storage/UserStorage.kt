@@ -29,7 +29,7 @@ class UserStorage(
                 secureStorage.get(STORAGE_KEY, object : TypeToken<User>() {}.type) ?: User.create()
             }
         }
-        return _state.value!!
+        return _state.value ?: User.create()
     }
 
     fun remove() {

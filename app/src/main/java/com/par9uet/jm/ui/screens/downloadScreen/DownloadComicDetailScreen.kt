@@ -23,16 +23,21 @@ import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.RemoveRedEye
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Error
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -52,6 +57,7 @@ import coil.ImageLoader
 import coil.compose.AsyncImage
 import com.par9uet.jm.store.RemoteSettingManager
 import com.par9uet.jm.store.ToastManager
+import com.par9uet.jm.store.DownloadManager
 import com.par9uet.jm.ui.components.ChapterMultiSelectDialog
 import com.par9uet.jm.ui.components.ChapterSingleSelectDialog
 import com.par9uet.jm.ui.components.ComicContentTag
@@ -80,7 +86,8 @@ fun DownloadComicDetailScreen(
     viewModel: DownloadComicDetailViewModel = koinViewModel(),
     imageLoader: ImageLoader = getKoin().get(),
     remoteSettingManager: RemoteSettingManager = getKoin().get(),
-    toastManager: ToastManager = getKoin().get()
+    toastManager: ToastManager = getKoin().get(),
+    downloadManager: DownloadManager = getKoin().get()
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -343,6 +350,49 @@ fun DownloadComicDetailScreen(
                         value = formatBytes(cachedInfo?.totalBytes ?: 0L)
                     )
                 }
+                if (detailState.isDownloading) {
+                    val animatedProgress by animateFloatAsState(
+                        targetValue = detailState.groupProgress,
+                        label = "downloadProgress"
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CachedInfoItem(
+                                modifier = Modifier.weight(0.5f),
+                                icon = Icons.Default.Speed,
+                                label = "下载速度",
+                                value = formatSpeed(detailState.downloadSpeed)
+                            )
+                            Text(
+                                text = "${(detailState.groupProgress * 100).toInt()}%",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        LinearProgressIndicator(
+                            progress = { animatedProgress },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+                if (detailState.hasError) {
+                    FilledTonalButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { downloadManager.retryGroup(viewModel.groupId.value) },
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.padding(end = 6.dp)
+                        )
+                        Text("重试下载")
+                    }
+                }
                 Text(
                     text = "缓存时间：${formatTime(detailState.createTime)}",
                     style = MaterialTheme.typography.bodyMedium,
@@ -498,4 +548,12 @@ private fun directorySize(dir: File): Long {
     return dir.walkBottomUp()
         .filter { it.isFile }
         .sumOf { it.length() }
+}
+
+private fun formatSpeed(bytesPerSec: Float): String {
+    return when {
+        bytesPerSec >= 1_048_576 -> String.format("%.1f MB/s", bytesPerSec / 1_048_576)
+        bytesPerSec >= 1024 -> String.format("%.0f KB/s", bytesPerSec / 1024)
+        else -> "${bytesPerSec.toInt()} B/s"
+    }
 }

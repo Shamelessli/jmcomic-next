@@ -429,7 +429,7 @@ private suspend fun fetchLatestRelease(): Result<GithubRelease> = withContext(Di
             if (!response.isSuccessful) {
                 error("GitHub 返回 ${response.code}")
             }
-            val body = response.body.string()
+            val body = response.body?.string() ?: error("GitHub 返回空响应")
             val json = JsonParser.parseString(body).asJsonObject
             val tagName = json.stringOrEmpty("tag_name")
             val name = json.stringOrEmpty("name")

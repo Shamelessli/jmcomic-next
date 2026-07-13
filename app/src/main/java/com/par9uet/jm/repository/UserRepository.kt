@@ -13,7 +13,8 @@ interface UserRepository {
     suspend fun login(username: String, password: String): NetWorkResult<LoginResponse>
     suspend fun getCollectComicList(
         page: Int = 1,
-        order: CollectComicOrderFilter = CollectComicOrderFilter.COLLECT_TIME
+        order: CollectComicOrderFilter = CollectComicOrderFilter.COLLECT_TIME,
+        folderId: Int = 0
     ): NetWorkResult<UserCollectComicListResponse>
 
     suspend fun getHistoryComicList(page: Int = 1): NetWorkResult<UserHistoryComicListResponse>

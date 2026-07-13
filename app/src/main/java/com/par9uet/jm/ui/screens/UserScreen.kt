@@ -176,8 +176,17 @@ private fun UserHeader(
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                val avatarModel = if (user.avatar.startsWith("http://", ignoreCase = true) ||
+                    user.avatar.startsWith("https://", ignoreCase = true)
+                ) {
+                    user.avatar
+                } else if (user.avatar.isNotBlank()) {
+                    "$imgHost/media/users/${user.avatar}"
+                } else {
+                    null
+                }
                 AsyncImage(
-                    model = "$imgHost/media/users/${user.avatar}",
+                    model = avatarModel,
                     contentDescription = "${user.username}的头像",
                     modifier = Modifier
                         .size(76.dp)

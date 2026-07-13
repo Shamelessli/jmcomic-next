@@ -34,6 +34,12 @@
 -keep class com.par9uet.jm.database.model.** { *; }
 -keep class com.par9uet.jm.ui.models.** { *; }
 -keep class com.par9uet.jm.task.AppTaskInfo { *; }
+-keep class com.par9uet.jm.utils.** { *; }
+-keep class com.par9uet.jm.utils.DownloadSpeedTracker { *; }
+-keepclassmembers class com.par9uet.jm.utils.DownloadSpeedTracker {
+    public static ** INSTANCE;
+    <methods>;
+}
 -keepclassmembers,allowobfuscation class * {
     @com.google.gson.annotations.SerializedName <fields>;
 }
@@ -54,6 +60,25 @@
 -keep class com.par9uet.jm.storage.** { *; }
 -keep class com.par9uet.jm.JmApplication { *; }
 -dontwarn org.koin.**
+
+# JMComic-Api-Java: keep AndroidImageProcessor and SPI service files so
+# ServiceLoader can discover the Android-compatible ImageProcessor at runtime
+# instead of falling back to AwtImageProcessor (which uses java.awt unavailable on Android).
+-keep class io.github.jukomu.jmcomic.android.support.** { *; }
+-keep class io.github.jukomu.jmcomic.core.image.spi.** { *; }
+-dontwarn io.github.jukomu.jmcomic.core.image.AwtImageProcessor
+-keepnames class io.github.jukomu.jmcomic.core.image.spi.** { *; }
+
+# Transitive dependency com.luciad.imageio.webp references javax.imageio.* which
+# is not available on Android. Android natively supports WebP via BitmapFactory,
+# so these classes are never used at runtime.
+-dontnote com.luciad.imageio.webp.**
+-dontwarn com.luciad.imageio.webp.**
+-dontwarn javax.imageio.ImageReader
+-dontwarn javax.imageio.spi.ImageReaderSpi
+-dontwarn javax.imageio.spi.ImageWriterSpi
+-dontwarn javax.imageio.stream.ImageInputStream
+-dontwarn javax.imageio.stream.ImageOutputStream
 
 # OkHttp cookies are persisted with Gson.
 -keep class okhttp3.Cookie { *; }

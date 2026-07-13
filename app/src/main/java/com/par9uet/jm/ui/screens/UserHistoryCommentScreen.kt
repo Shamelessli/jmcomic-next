@@ -39,6 +39,7 @@ fun UserHistoryCommentScreen(
     userViewModel: UserViewModel = koinActivityViewModel()
 ) {
     val historyCommentLazyPagingItems = userViewModel.historyCommentPager.collectAsLazyPagingItems()
+    val navController = LocalMainNavController.current
     CommonScaffold(
         title = "历史评论"
     ) {
@@ -48,10 +49,18 @@ fun UserHistoryCommentScreen(
         }
         PullRefreshAndLoadMoreGrid(
             lazyPagingItems = historyCommentLazyPagingItems,
-            key = { it.id },
+            key = { "${it.comicId}:${it.sourceChapterId}:${it.id}:${it.time}:${it.content.hashCode()}" },
             columns = GridCells.Fixed(1)
         ) {
-            Comment(it)
+            Comment(
+                comment = it,
+                showSource = true,
+                onClick = if (it.comicId > 0) {
+                    { navController.navigate("comicDetail/${it.comicId}") }
+                } else {
+                    null
+                }
+            )
         }
     }
 }

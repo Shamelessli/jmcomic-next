@@ -5,14 +5,17 @@ import androidx.lifecycle.viewModelScope
 import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.cachedIn
+import com.par9uet.jm.data.models.COMIC_API_SOURCE_BUILTIN
 import com.par9uet.jm.data.models.Comic
 import com.par9uet.jm.database.dao.DownloadComicDao
 import com.par9uet.jm.repository.ComicRepository
+import com.par9uet.jm.repository.UserRepository
 import com.par9uet.jm.retrofit.model.CollectComicResponse
 import com.par9uet.jm.retrofit.model.ComicDetailResponse
 import com.par9uet.jm.retrofit.model.CommentComicResponse
 import com.par9uet.jm.retrofit.model.LikeComicResponse
 import com.par9uet.jm.retrofit.model.NetWorkResult
+import com.par9uet.jm.store.LocalSettingManager
 import com.par9uet.jm.store.RemoteSettingManager
 import com.par9uet.jm.store.ToastManager
 import com.par9uet.jm.ui.models.CommonUIState
@@ -30,6 +33,8 @@ class ComicDetailViewModel(
     private val toastManager: ToastManager,
     private val downloadComicDao: DownloadComicDao,
     private val remoteSettingManager: RemoteSettingManager,
+    private val userRepository: UserRepository,
+    private val localSettingManager: LocalSettingManager,
 ) : ViewModel() {
     private val _comicDetailState = MutableStateFlow<CommonUIState<Comic>>(
         CommonUIState(
@@ -96,14 +101,17 @@ class ComicDetailViewModel(
 
                 is NetWorkResult.Success<LikeComicResponse> -> {
                     toastManager.showAsync("喜欢成功")
-                    if (_comicDetailState.value.data != null) {
-                        _comicDetailState.update {
-                            it.copy(
-                                data = it.data!!.copy(
+                    _comicDetailState.update { state ->
+                        val currentData = state.data
+                        if (currentData != null) {
+                            state.copy(
+                                data = currentData.copy(
                                     isLike = true,
-                                    likeCount = it.data.likeCount + 1
+                                    likeCount = currentData.likeCount + 1
                                 )
                             )
+                        } else {
+                            state
                         }
                     }
                 }
@@ -139,13 +147,12 @@ class ComicDetailViewModel(
 
                 is NetWorkResult.Success<CollectComicResponse> -> {
                     toastManager.showAsync("收藏成功")
-                    if (_comicDetailState.value.data != null) {
-                        _comicDetailState.update {
-                            it.copy(
-                                data = it.data!!.copy(
-                                    isCollect = true,
-                                )
-                            )
+                    _comicDetailState.update { state ->
+                        val currentData = state.data
+                        if (currentData != null) {
+                            state.copy(data = currentData.copy(isCollect = true))
+                        } else {
+                            state
                         }
                     }
                 }
@@ -179,13 +186,12 @@ class ComicDetailViewModel(
 
                 is NetWorkResult.Success<CollectComicResponse> -> {
                     toastManager.showAsync("取消收藏成功")
-                    if (_comicDetailState.value.data != null) {
-                        _comicDetailState.update {
-                            it.copy(
-                                data = it.data!!.copy(
-                                    isCollect = false,
-                                )
-                            )
+                    _comicDetailState.update { state ->
+                        val currentData = state.data
+                        if (currentData != null) {
+                            state.copy(data = currentData.copy(isCollect = false))
+                        } else {
+                            state
                         }
                     }
                 }
@@ -195,6 +201,73 @@ class ComicDetailViewModel(
                     isLoading = false,
                 )
             }
+        }
+    }
+
+    // 收藏夹选择相关
+    private val _folderList = MutableStateFlow<Map<String, String>>(emptyMap())
+    val folderList = _folderList.asStateFlow()
+
+    private val _showFolderPicker = MutableStateFlow(false)
+    val showFolderPicker = _showFolderPicker.asStateFlow()
+
+    fun shouldShowFolderPicker(): Boolean {
+        return localSettingManager.localSettingState.value.comicApiSource == COMIC_API_SOURCE_BUILTIN
+    }
+
+    fun refreshFolderList() {
+        viewModelScope.launch {
+            val order = com.par9uet.jm.data.models.CollectComicOrderFilter.COLLECT_TIME
+            when (val data = userRepository.getCollectComicList(1, order, 0)) {
+                is NetWorkResult.Success -> _folderList.value = data.data.folder_list ?: emptyMap()
+                else -> {}
+            }
+        }
+    }
+
+    fun showFolderPicker() {
+        _showFolderPicker.value = true
+    }
+
+    fun hideFolderPicker() {
+        _showFolderPicker.value = false
+    }
+
+    fun collectWithFolder(comicId: Int, folderId: String) {
+        viewModelScope.launch {
+            _showFolderPicker.value = false
+            _collectComicState.update { it.copy(isLoading = true, isError = false, errorMsg = "") }
+            // 先收藏到默认夹
+            when (val data = comicRepository.collectComic(comicId)) {
+                is NetWorkResult.Error -> {
+                    _collectComicState.update { it.copy(isError = true, errorMsg = data.message) }
+                }
+                is NetWorkResult.Success<CollectComicResponse> -> {
+                    // 如果选择了非默认夹，再移动到目标夹
+                    if (folderId != "0") {
+                        when (val moveResult = comicRepository.moveComicToFolder(comicId, folderId)) {
+                            is NetWorkResult.Error -> {
+                                toastManager.showAsync("已收藏但移动到收藏夹失败：${moveResult.message}")
+                            }
+                            is NetWorkResult.Success<Unit> -> {
+                                val folderName = _folderList.value[folderId] ?: "收藏夹"
+                                toastManager.showAsync("已收藏到 $folderName")
+                            }
+                        }
+                    } else {
+                        toastManager.showAsync("收藏成功")
+                    }
+                    _comicDetailState.update { state ->
+                        val currentData = state.data
+                        if (currentData != null) {
+                            state.copy(data = currentData.copy(isCollect = true))
+                        } else {
+                            state
+                        }
+                    }
+                }
+            }
+            _collectComicState.update { it.copy(isLoading = false) }
         }
     }
 

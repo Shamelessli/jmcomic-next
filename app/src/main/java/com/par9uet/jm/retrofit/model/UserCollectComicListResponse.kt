@@ -4,7 +4,7 @@ import com.par9uet.jm.data.models.Comic
 
 data class UserCollectComicListResponse(
     val count: Int,
-//    val folder_list: List<*>,
+    val folder_list: Map<String, String>? = null,
     val list: List<ListItem>,
     val total: Int,
 ) {

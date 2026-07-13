@@ -37,6 +37,20 @@ interface DownloadComicDao {
     @Query("SELECT * FROM download_comics WHERE status = 'error' ORDER BY createTime DESC")
     fun observeErrorList(): Flow<List<DownloadComic>>
 
+    @Query(
+        "SELECT * FROM download_comics " +
+            "WHERE (groupId = :groupId OR (groupId = 0 AND id = :groupId)) " +
+            "ORDER BY createTime ASC"
+    )
+    fun observeByGroupId(groupId: Int): Flow<List<DownloadComic>>
+
+    @Query(
+        "SELECT * FROM download_comics " +
+            "WHERE status = 'complete' AND (groupId = :groupId OR (groupId = 0 AND id = :groupId)) " +
+            "ORDER BY createTime ASC"
+    )
+    fun observeCompleteByGroupId(groupId: Int): Flow<List<DownloadComic>>
+
     @Query("SELECT * FROM download_comics WHERE id = :comicId LIMIT 1")
     suspend fun getById(comicId: Int): DownloadComic?
 

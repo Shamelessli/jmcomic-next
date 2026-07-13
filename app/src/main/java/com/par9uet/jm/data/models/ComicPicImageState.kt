@@ -22,6 +22,7 @@ import coil.request.SuccessResult
 import coil.size.Size
 import com.par9uet.jm.cache.getCommonPicDecodeCacheDir
 import com.par9uet.jm.utils.compressWebpCompat
+import com.par9uet.jm.utils.logError
 import com.par9uet.jm.utils.md5
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -46,6 +47,7 @@ class ComicPicImageState(
     val __scrambleId: Int,
     val __speed: String,
     private val picImageLoader: ImageLoader,
+    private val imageFetcher: (suspend () -> ByteArray?)? = null,
 ) {
 
     companion object {
@@ -107,7 +109,37 @@ class ComicPicImageState(
             }
 
             is ErrorResult -> {
-                Log.d("comic pic", result.throwable.stackTraceToString())
+                // Coil 加载失败，尝试使用内置 API 的 imageFetcher 回退
+                val fetchedBytes = try {
+                    imageFetcher?.invoke()
+                } catch (e: Exception) {
+                    logError("ComicPicImage", "imageFetcher 调用失败: ${e.stackTraceToString()}")
+                    null
+                }
+                if (fetchedBytes != null) {
+                    try {
+                        val originalBitmap = BitmapFactory.decodeByteArray(fetchedBytes, 0, fetchedBytes.size)
+                        if (originalBitmap != null) {
+                            val originalImageBitmap = originalBitmap.asImageBitmap()
+                            val decodeImageAspectRatio =
+                                originalImageBitmap.width * 1.0f / originalImageBitmap.height
+                            var decodedImageBitmap = originalImageBitmap
+                            if (isGif() || comicId <= __scrambleId || __speed == "1") {
+                                saveBitmapAsWebp(originalBitmap, cacheFile)
+                            } else {
+                                val decodedBitmap = decodeBitmap(originalBitmap, page)
+                                saveBitmapAsWebp(decodedBitmap, cacheFile)
+                                decodedImageBitmap = decodedBitmap.asImageBitmap()
+                            }
+                            imageResultState =
+                                ImageResultState.Success(decodedImageBitmap, decodeImageAspectRatio)
+                            return
+                        }
+                    } catch (e: Exception) {
+                        logError("ComicPicImage", "内置API图片解码失败: ${e.stackTraceToString()}")
+                    }
+                }
+                logError("ComicPicImage", "图片加载失败: ${result.throwable.stackTraceToString()}")
                 imageResultState = ImageResultState.Failure("网络错误")
             }
         }
@@ -171,7 +203,7 @@ class ComicPicImageState(
     }
 
     private fun extractPageFromUrl(): String {
-        return originSrc.substringAfterLast('/').substringBeforeLast('.')
+        return originSrc.substringBefore('?').substringAfterLast('/').substringBeforeLast('.')
     }
 
     private suspend fun saveBitmapAsWebp(bitmap: Bitmap, file: File) {
@@ -183,6 +215,6 @@ class ComicPicImageState(
     }
 
     private fun isGif(): Boolean {
-        return originSrc.endsWith(".gif")
+        return originSrc.substringBefore('?').endsWith(".gif", ignoreCase = true)
     }
 }

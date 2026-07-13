@@ -112,7 +112,7 @@ class AiChatRepository(
             .build()
         return client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return@use null
-            response.body.string()
+            response.body?.string()
         }
     }
 
@@ -142,12 +142,13 @@ class AiChatRepository(
             .build()
 
         client.newCall(request).execute().use { response ->
+            val responseBody = response.body ?: throw IllegalStateException("AI 服务返回空响应")
             if (!response.isSuccessful) {
-                val message = response.body.string().ifBlank { "HTTP ${response.code}" }
+                val message = responseBody.string().ifBlank { "HTTP ${response.code}" }
                 throw IllegalStateException("AI 请求失败：$message")
             }
 
-            val bodySource = response.body.source()
+            val bodySource = responseBody.source()
             while (!bodySource.exhausted()) {
                 val line = bodySource.readUtf8Line() ?: continue
                 val text = line.trim()

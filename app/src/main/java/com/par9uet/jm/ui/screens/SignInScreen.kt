@@ -159,7 +159,7 @@ fun SignInScreen(
                             )
                             val visibleMonth = rememberFirstVisibleMonthAfterScroll(state)
                             val title = visibleMonth.yearMonth.toString() + when {
-                                signDataState.data != null -> "【${signDataState.data!!.eventName}】"
+                                signDataState.data != null -> "【${signDataState.data?.eventName ?: ""}】"
                                 else -> ""
                             }
                             Text(
@@ -191,7 +191,7 @@ fun SignInScreen(
                                             modifier = Modifier.weight(1f),
                                             textAlign = TextAlign.Center,
                                             fontSize = 15.sp,
-                                            text = weekTextMap[dayOfWeek.value]!!
+                                            text = weekTextMap[dayOfWeek.value] ?: ""
                                         )
                                     }
                                 }
@@ -200,11 +200,11 @@ fun SignInScreen(
                                 if (day.position == DayPosition.MonthDate) {
                                     var isSign = false
                                     var hasExtraBonus = false
-                                    if (signDataState.data != null) {
-                                        val data =
-                                            signDataState.data!!.dateMap[day.date.dayOfMonth]!!
-                                        isSign = data.isSign
-                                        hasExtraBonus = data.hasExtraBonus
+                                    val signData = signDataState.data
+                                    if (signData != null) {
+                                        val data = signData.dateMap[day.date.dayOfMonth]
+                                        isSign = data?.isSign ?: false
+                                        hasExtraBonus = data?.hasExtraBonus ?: false
                                     }
                                     Day(
                                         day = day,

@@ -1,5 +1,7 @@
 package com.par9uet.jm.ui.screens
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -13,6 +15,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.AlertDialog
@@ -21,6 +24,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -71,6 +75,27 @@ private fun UserCollectComicSkeleton(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun FolderChip(
+    folderName: String,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)?
+) {
+    FilterChip(
+        selected = isSelected,
+        onClick = onClick,
+        label = { Text(folderName) },
+        modifier = if (onLongClick != null) {
+            Modifier.combinedClickable(
+                onClick = {},
+                onLongClick = onLongClick
+            )
+        } else Modifier
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UserCollectComicScreen(
@@ -81,11 +106,30 @@ fun UserCollectComicScreen(
     val order by userViewModel.collectComicOrder.collectAsState()
     val collectComicFilter by userViewModel.collectComicFilter.collectAsState()
     val tagCountMap by userViewModel.collectTagCounts.collectAsState()
+    val selectedFolderId by userViewModel.selectedFolderId.collectAsState()
+    val folderList by userViewModel.folderList.collectAsState()
     var draftSelectedTags by remember { mutableStateOf<Set<String>>(emptySet()) }
     var showTagFilterDialog by remember { mutableStateOf(false) }
 
+    var showCreateFolderDialog by remember { mutableStateOf(false) }
+    var newFolderName by remember { mutableStateOf("") }
+    var actionFolderId by remember { mutableStateOf<String?>(null) }
+    var actionFolderName by remember { mutableStateOf("") }
+    var showFolderActionDialog by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var renameFolderName by remember { mutableStateOf("") }
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+
+    val folders = remember(folderList) {
+        val result = linkedMapOf<String, String>()
+        result["0"] = folderList["0"] ?: "全部"
+        folderList.filterKeys { it != "0" }.forEach { (id, name) -> result[id] = name }
+        result
+    }
+
     LaunchedEffect(Unit) {
         userViewModel.refreshCollectTagCounts()
+        userViewModel.refreshFolderList()
     }
 
     val content: @Composable () -> Unit = {
@@ -93,6 +137,39 @@ fun UserCollectComicScreen(
             modifier = Modifier
                 .fillMaxSize()
         ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(10.dp)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                folders.forEach { (folderId, folderName) ->
+                    key(folderId) {
+                        FolderChip(
+                            folderName = folderName,
+                            isSelected = selectedFolderId == folderId.toIntOrNull(),
+                            onClick = {
+                                userViewModel.changeFolder(folderId.toIntOrNull() ?: 0)
+                            },
+                            onLongClick = if (folderId != "0") {
+                                {
+                                    actionFolderId = folderId
+                                    actionFolderName = folderName
+                                    showFolderActionDialog = true
+                                }
+                            } else null
+                        )
+                    }
+                }
+                IconButton(onClick = {
+                    newFolderName = ""
+                    showCreateFolderDialog = true
+                }) {
+                    Icon(Icons.Rounded.Add, contentDescription = "新建收藏夹")
+                }
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -210,6 +287,107 @@ fun UserCollectComicScreen(
                 }) {
                     Text("清空")
                 }
+            }
+        )
+    }
+
+    if (showCreateFolderDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showCreateFolderDialog = false
+                newFolderName = ""
+            },
+            title = { Text("新建收藏夹") },
+            text = {
+                OutlinedTextField(
+                    value = newFolderName,
+                    onValueChange = { newFolderName = it },
+                    singleLine = true,
+                    label = { Text("文件夹名称") }
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (newFolderName.isNotBlank()) {
+                        userViewModel.createFolder(newFolderName.trim())
+                        newFolderName = ""
+                        showCreateFolderDialog = false
+                    }
+                }) { Text("创建") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    newFolderName = ""
+                    showCreateFolderDialog = false
+                }) { Text("取消") }
+            }
+        )
+    }
+
+    if (showFolderActionDialog) {
+        AlertDialog(
+            onDismissRequest = { showFolderActionDialog = false },
+            title = { Text(actionFolderName) },
+            text = { Text("请选择操作") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showFolderActionDialog = false
+                    renameFolderName = actionFolderName
+                    showRenameDialog = true
+                }) { Text("重命名") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showFolderActionDialog = false
+                    showDeleteConfirmDialog = true
+                }) { Text("删除") }
+            }
+        )
+    }
+
+    if (showRenameDialog) {
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = false },
+            title = { Text("重命名收藏夹") },
+            text = {
+                OutlinedTextField(
+                    value = renameFolderName,
+                    onValueChange = { renameFolderName = it },
+                    singleLine = true,
+                    label = { Text("新名称") }
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val folderId = actionFolderId
+                    if (renameFolderName.isNotBlank() && folderId != null) {
+                        userViewModel.renameFolder(folderId, renameFolderName.trim())
+                        showRenameDialog = false
+                    }
+                }) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameDialog = false }) { Text("取消") }
+            }
+        )
+    }
+
+    if (showDeleteConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmDialog = false },
+            title = { Text("删除收藏夹") },
+            text = { Text("确定删除「${actionFolderName}」吗？\n注意：删除收藏夹不会删除其中的漫画，漫画会移至「全部」。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    val folderId = actionFolderId
+                    if (folderId != null) {
+                        userViewModel.deleteFolder(folderId)
+                        showDeleteConfirmDialog = false
+                    }
+                }) { Text("删除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmDialog = false }) { Text("取消") }
             }
         )
     }

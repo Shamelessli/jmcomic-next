@@ -9,16 +9,16 @@ data class CommentListResponse(
 ) {
     data class ListItem(
         val AID: String?,
-        val BID: String,
-        val CID: String,
-        val UID: String,
-        val username: String,
-        val nickname: String,
-        val likes: String,
-        val gender: String,
-        val update_at: String,
-        val addtime: String,
-        val parent_CID: String,
+        val BID: String?,
+        val CID: String?,
+        val UID: String?,
+        val username: String?,
+        val nickname: String?,
+        val likes: String?,
+        val gender: String?,
+        val update_at: String?,
+        val addtime: String?,
+        val parent_CID: String?,
         // 等级相关，这里不写，没啥意义
 //        expinfo: {
 //        level_name: string
@@ -33,25 +33,28 @@ data class CommentListResponse(
 //            id: string
 //        }>
 //    }
-        val name: String,
-        val content: String,
-        val photo: String,
-        val spoiler: String, // 是否剧透 1 和 0
+        val name: String?,
+        val content: String?,
+        val photo: String?,
+        val spoiler: String?, // 是否剧透 1 和 0
         val replys: List<ListItem>?
     ) {
         fun toComment(): Comment = Comment(
-            userId = UID.toInt(),
-            comicId = AID?.toInt() ?: 0,
-            id = CID.toInt(),
-            time = translateCommentTime(addtime),
-            content = content,
-            likeCount = likes.toInt(),
-            username = username,
-            nickname = nickname,
-            avatar = photo,
-            parentId = parent_CID.toInt(),
+            userId = UID.toIntOrZero(),
+            comicId = AID.toIntOrZero(),
+            id = CID.toIntOrZero(),
+            time = translateCommentTime(addtime.orEmpty()),
+            content = content.orEmpty(),
+            likeCount = likes.toIntOrZero(),
+            username = username.orEmpty(),
+            nickname = nickname.orEmpty().ifBlank { username.orEmpty() },
+            avatar = photo.orEmpty(),
+            parentId = parent_CID.toIntOrZero(),
             spoiler = spoiler == "1",
-            replyCommentList = replys?.map { it.toComment() } ?: listOf()
+            replyCommentList = replys?.map { it.toComment() } ?: listOf(),
+            sourceComicName = name.orEmpty(),
+            sourceChapterId = BID.orEmpty(),
+            sourceBlogId = BID.orEmpty()
         )
     }
 
@@ -61,3 +64,5 @@ data class CommentListResponse(
         }
     }
 }
+
+private fun String?.toIntOrZero(): Int = this?.toIntOrNull() ?: 0

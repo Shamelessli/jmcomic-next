@@ -95,9 +95,10 @@ class UserManager(
             )
         }
         log("已加载本地用户、cookie、登录信息")
-        if (_userState.value.data!!.username.isNotEmpty() && _userState.value.data!!.password.isNotEmpty()) {
-            val username = _userState.value.data!!.username
-            val password = _userState.value.data!!.password
+        val userData = _userState.value.data
+        if (userData != null && userData.username.isNotEmpty() && userData.password.isNotEmpty()) {
+            val username = userData.username
+            val password = userData.password
             log("检测到已保存了用户登录信息，开始执行一次用户登录")
             autoLogin(username, password)
         }

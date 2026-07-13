@@ -16,19 +16,26 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.MenuBook
 import androidx.compose.material.icons.rounded.Api
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.Psychology
+import androidx.compose.material.icons.rounded.Recommend
 import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.BugReport
+import androidx.compose.material.icons.rounded.CleaningServices
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -42,6 +49,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.par9uet.jm.data.models.COMIC_API_SOURCE_BUILTIN
+import com.par9uet.jm.data.models.COMIC_API_SOURCE_NETWORK
 import com.par9uet.jm.data.models.LauncherDisguise
 import com.par9uet.jm.data.models.LocalSetting
 import com.par9uet.jm.store.LocalSettingManager
@@ -51,6 +60,7 @@ import com.par9uet.jm.ui.components.SelectOption
 import org.koin.compose.getKoin
 
 private sealed class SettingType {
+    object ComicApiSource : SettingType()
     object Api : SettingType()
     object Theme : SettingType()
     object LauncherDisguise : SettingType()
@@ -66,12 +76,16 @@ private const val NOTIFICATION_ON_WITHOUT_NAME = "on_without_name"
 private const val NOTIFICATION_OFF = "off"
 
 private val themeTextMap = mapOf(
-    "auto" to "跟随系统",
-    "light" to "日间模式",
-    "dark" to "夜间模式",
+    "auto" to "\u8ddf\u968f\u7cfb\u7edf",
+    "light" to "\u65e5\u95f4\u6a21\u5f0f",
+    "dark" to "\u591c\u95f4\u6a21\u5f0f",
 )
 
-@OptIn(ExperimentalMaterial3Api::class)
+private val comicApiSourceTextMap = mapOf(
+    COMIC_API_SOURCE_BUILTIN to "\u5185\u7f6e API",
+    COMIC_API_SOURCE_NETWORK to "\u7f51\u7edc API",
+)
+
 @Composable
 fun LocalSettingScreen(
     localSettingManager: LocalSettingManager = getKoin().get()
@@ -86,196 +100,251 @@ fun LocalSettingScreen(
         isOpenSettingSelectDialog = true
     }
 
-    CommonScaffold(title = "设置") {
+    // 应用锁状态文本
+    val appLockStatusText by remember(localSetting) {
+        derivedStateOf {
+            if (!localSetting.appLockEnabled) {
+                "\u672a\u542f\u7528"
+            } else {
+                val methods = buildList {
+                    if (localSetting.appLockPassword.isNotEmpty()) add("\u5bc6\u7801")
+                    if (localSetting.appLockPattern.isNotEmpty()) add("\u56fe\u6848")
+                }
+                if (methods.isEmpty()) {
+                    "\u5df2\u542f\u7528"
+                } else {
+                    "\u5df2\u542f\u7528 - ${methods.joinToString("+")}"
+                }
+            }
+        }
+    }
+
+    CommonScaffold(title = "\u8bbe\u7f6e") {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item {
-                SettingsSection(title = "外观") {
-                    SettingsRow(
-                        icon = Icons.Rounded.DarkMode,
-                        title = "主题",
-                        value = themeTextMap[localSetting.theme].orEmpty(),
-                        onClick = { openSetting(SettingType.Theme) }
+                SettingsSection(title = "\u663e\u793a") {
+                    SettingsRow(Icons.Rounded.DarkMode, "\u4e3b\u9898", themeTextMap[localSetting.theme].orEmpty()) {
+                        openSetting(SettingType.Theme)
+                    }
+                    SettingsRow(Icons.Rounded.Image, "\u56fe\u6807\u4f2a\u88c5", LauncherDisguise.fromId(localSetting.launcherDisguise).label) {
+                        openSetting(SettingType.LauncherDisguise)
+                    }
+                    SettingsSwitchRow(
+                        icon = Icons.Rounded.Psychology,
+                        title = "\u663e\u793a AI",
+                        value = localSetting.showAiEntry,
+                        onCheckedChange = localSettingManager::updateShowAiEntry
                     )
-                    SettingsRow(
-                        icon = Icons.Rounded.Image,
-                        title = "图标伪装",
-                        value = LauncherDisguise.fromId(localSetting.launcherDisguise).label,
-                        onClick = { openSetting(SettingType.LauncherDisguise) }
-                    )
-                }
-            }
-            item {
-                SettingsSection(title = "连接") {
-                    SettingsRow(
-                        icon = Icons.Rounded.Api,
-                        title = "API 接口",
-                        value = localSetting.api,
-                        onClick = { openSetting(SettingType.Api) }
-                    )
-                    SettingsRow(
-                        icon = Icons.Rounded.Image,
-                        title = "图片线路",
-                        value = "线路${localSetting.shunt}",
-                        onClick = { openSetting(SettingType.Shunt) }
+                    SettingsSwitchRow(
+                        icon = Icons.Rounded.ContentPaste,
+                        title = "\u526a\u5207\u677f\u81ea\u52a8\u68c0\u6d4b",
+                        value = localSetting.clipboardAutoDetectEnabled,
+                        onCheckedChange = localSettingManager::updateClipboardAutoDetectEnabled
                     )
                 }
             }
             item {
-                SettingsSection(title = "阅读") {
+                SettingsSection(title = "\u9690\u79c1") {
                     SettingsRow(
-                        icon = Icons.Rounded.Tune,
-                        title = "图片预载数量",
-                        value = prefetchText(localSetting.prefetchCount),
-                        onClick = { openSetting(SettingType.PrefetchCount) }
-                    )
-                    SettingsRow(
-                        icon = Icons.AutoMirrored.Rounded.MenuBook,
-                        title = "阅读模式",
-                        value = readModeText(localSetting.readMode),
-                        onClick = { openSetting(SettingType.ReadMode) }
-                    )
-                    SettingsRow(
-                        icon = Icons.Rounded.Tune,
-                        title = "点击翻图",
-                        value = if (localSetting.readTapMode == "side") "左右两侧" else "默认区域",
-                        onClick = { openSetting(SettingType.ReadTapMode) }
-                    )
+                        icon = Icons.Rounded.Lock,
+                        title = "\u5e94\u7528\u9501",
+                        value = appLockStatusText
+                    ) {
+                        mainNavController.navigate("appLockSetting")
+                    }
                 }
             }
             item {
-                SettingsSection(title = "通知") {
+                SettingsSection(title = "\u8fde\u63a5") {
                     SettingsRow(
-                        icon = Icons.Rounded.Notifications,
-                        title = "通知管理",
-                        value = notificationText(localSetting),
-                        onClick = { openSetting(SettingType.NotificationManagement) }
-                    )
+                        Icons.Rounded.Api,
+                        "\u6570\u636e\u6e90",
+                        comicApiSourceTextMap[localSetting.comicApiSource].orEmpty()
+                    ) {
+                        openSetting(SettingType.ComicApiSource)
+                    }
+                    if (localSetting.comicApiSource == COMIC_API_SOURCE_NETWORK) {
+                        SettingsRow(Icons.Rounded.Api, "API", localSetting.api) {
+                            openSetting(SettingType.Api)
+                        }
+                        SettingsRow(Icons.Rounded.Image, "\u56fe\u7247\u7ebf\u8def", "\u7ebf\u8def ${localSetting.shunt}") {
+                            openSetting(SettingType.Shunt)
+                        }
+                    } else {
+                        SettingsSwitchRow(
+                            icon = Icons.Rounded.Recommend,
+                            title = "\u504f\u597d\u63a8\u8350",
+                            value = localSetting.preferenceRecommendEnabled,
+                            onCheckedChange = { localSettingManager.updatePreferenceRecommendEnabled(it) }
+                        )
+                        if (localSetting.preferenceRecommendEnabled) {
+                            Text(
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                                text = "\u5f00\u542f\u540e\u5c06\u8bf7\u6c42\u7f51\u7edc API \u83b7\u53d6\u57fa\u4e8e\u767b\u5f55\u8d26\u53f7\u7684\u4e2a\u6027\u5316\u63a8\u8350\uff0c\u53ef\u80fd\u4e0d\u7a33\u5b9a",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
             }
             item {
-                SettingsSection(title = "其他") {
+                SettingsSection(title = "\u9605\u8bfb") {
+                    SettingsRow(Icons.Rounded.Tune, "\u56fe\u7247\u9884\u52a0\u8f7d", prefetchText(localSetting.prefetchCount)) {
+                        openSetting(SettingType.PrefetchCount)
+                    }
+                    SettingsRow(Icons.AutoMirrored.Rounded.MenuBook, "\u9605\u8bfb\u6a21\u5f0f", readModeText(localSetting.readMode)) {
+                        openSetting(SettingType.ReadMode)
+                    }
                     SettingsRow(
-                        icon = Icons.Rounded.SystemUpdate,
-                        title = "检查更新",
-                        value = "查看 GitHub Release 最新版本",
-                        onClick = { mainNavController.navigate("checkUpdate") }
-                    )
-                    SettingsRow(
-                        icon = Icons.Rounded.Info,
-                        title = "关于",
-                        value = "应用版本与 GitHub 仓库",
-                        onClick = { mainNavController.navigate("about") }
-                    )
+                        Icons.Rounded.Tune,
+                        "\u70b9\u51fb\u7ffb\u56fe",
+                        if (localSetting.readTapMode == "side") "\u5de6\u53f3\u4e24\u4fa7" else "\u9ed8\u8ba4\u533a\u57df"
+                    ) {
+                        openSetting(SettingType.ReadTapMode)
+                    }
+                }
+            }
+            item {
+                SettingsSection(title = "\u901a\u77e5") {
+                    SettingsRow(Icons.Rounded.Notifications, "\u901a\u77e5\u7ba1\u7406", notificationText(localSetting)) {
+                        openSetting(SettingType.NotificationManagement)
+                    }
+                }
+            }
+            item {
+                SettingsSection(title = "\u5176\u4ed6") {
+                    SettingsRow(Icons.Rounded.BugReport, "\u67e5\u770b\u65e5\u5fd7", "\u8c03\u8bd5\u548c\u9519\u8bef\u4fe1\u606f") {
+                        mainNavController.navigate("logViewer")
+                    }
+                    SettingsRow(Icons.Rounded.CleaningServices, "\u7f13\u5b58\u6e05\u7406", "\u6e05\u7406\u56fe\u7247\u3001\u6f2b\u753b\u7b49\u7f13\u5b58\u6587\u4ef6") {
+                        mainNavController.navigate("cacheCleanup")
+                    }
+                    SettingsRow(Icons.Rounded.SystemUpdate, "\u68c0\u67e5\u66f4\u65b0", "\u67e5\u770b GitHub Release \u6700\u65b0\u7248\u672c") {
+                        mainNavController.navigate("checkUpdate")
+                    }
+                    SettingsRow(Icons.Rounded.Info, "\u5173\u4e8e", "\u5e94\u7528\u7248\u672c\u548c\u4ed3\u5e93") {
+                        mainNavController.navigate("about")
+                    }
                 }
             }
         }
 
         if (isOpenSettingSelectDialog) {
-            val apiSelectOptionList by remember(localSetting.apiList) {
-                derivedStateOf {
-                    localSetting.apiList.map {
-                        SelectOption(it.removePrefix("https://"), it)
-                    }
-                }
-            }
-            val themeSelectOptionList by remember(localSetting.themeList) {
-                derivedStateOf {
-                    localSetting.themeList.map {
-                        SelectOption(themeTextMap[it].orEmpty(), it)
-                    }
-                }
-            }
-            val launcherDisguiseOptionList by remember {
-                derivedStateOf {
-                    LauncherDisguise.entries.map {
-                        SelectOption(it.label, it.id)
-                    }
-                }
-            }
-            val shuntOptionList by remember(localSetting.shuntList) {
-                derivedStateOf {
-                    localSetting.shuntList.map {
-                        SelectOption("线路$it", it)
-                    }
-                }
-            }
-            val prefetchCountOptionList by remember {
-                derivedStateOf {
-                    listOf(
-                        SelectOption("关闭", "0"),
-                        SelectOption("预载一张", "1"),
-                        SelectOption("预载两张", "2"),
-                        SelectOption("预载三张", "3")
-                    )
-                }
-            }
-            val readModeOptionList by remember {
-                derivedStateOf {
-                    listOf(
-                        SelectOption("滚动模式", "scroll"),
-                        SelectOption("翻页模式", "page"),
-                        SelectOption("点击模式", "tap")
-                    )
-                }
-            }
-            val readTapModeOptionList by remember {
-                derivedStateOf {
-                    listOf(
-                        SelectOption("默认区域", "default"),
-                        SelectOption("左右两侧", "side")
-                    )
-                }
-            }
-            val booleanOptionList by remember {
-                derivedStateOf {
-                    listOf(
-                        SelectOption("开启并显示漫画名", NOTIFICATION_ON_WITH_NAME),
-                        SelectOption("开启但不显示漫画名", NOTIFICATION_ON_WITHOUT_NAME),
-                        SelectOption("关闭通知", NOTIFICATION_OFF)
-                    )
-                }
-            }
-            SelectDialog(
-                title = settingTitle(settingType),
-                value = settingValue(settingType, localSetting),
-                selectOptionList = when (settingType) {
-                    is SettingType.Api -> apiSelectOptionList
-                    is SettingType.Theme -> themeSelectOptionList
-                    is SettingType.LauncherDisguise -> launcherDisguiseOptionList
-                    is SettingType.Shunt -> shuntOptionList
-                    is SettingType.PrefetchCount -> prefetchCountOptionList
-                    is SettingType.ReadMode -> readModeOptionList
-                    is SettingType.ReadTapMode -> readTapModeOptionList
-                    is SettingType.NotificationManagement -> booleanOptionList
-                },
-                onSelect = {
-                    when (settingType) {
-                        is SettingType.Api -> localSettingManager.updateApi(it)
-                        is SettingType.Theme -> localSettingManager.updateTheme(it)
-                        is SettingType.LauncherDisguise -> localSettingManager.updateLauncherDisguise(it)
-                        is SettingType.Shunt -> localSettingManager.updateShunt(it)
-                        is SettingType.PrefetchCount -> localSettingManager.updatePrefetchCount(it)
-                        is SettingType.ReadMode -> localSettingManager.updateReadMode(it)
-                        is SettingType.ReadTapMode -> localSettingManager.updateReadTapMode(it)
-                        is SettingType.NotificationManagement -> {
-                            localSettingManager.updateNotificationSettings(
-                                show = it != NOTIFICATION_OFF,
-                                showName = it == NOTIFICATION_ON_WITH_NAME
-                            )
-                        }
-                    }
-                    isOpenSettingSelectDialog = false
-                },
-                onDismissRequest = {
-                    isOpenSettingSelectDialog = false
-                }
+            SettingSelectDialogContent(
+                settingType = settingType,
+                localSetting = localSetting,
+                localSettingManager = localSettingManager,
+                onDismiss = { isOpenSettingSelectDialog = false }
             )
         }
     }
+}
+
+@Composable
+private fun SettingSelectDialogContent(
+    settingType: SettingType,
+    localSetting: LocalSetting,
+    localSettingManager: LocalSettingManager,
+    onDismiss: () -> Unit
+) {
+    val apiSelectOptionList by remember(localSetting.apiList) {
+        derivedStateOf { localSetting.apiList.map { SelectOption(it.removePrefix("https://"), it) } }
+    }
+    val comicApiSourceOptionList by remember(localSetting.comicApiSourceList) {
+        derivedStateOf {
+            localSetting.comicApiSourceList.map {
+                SelectOption(comicApiSourceTextMap[it].orEmpty(), it)
+            }
+        }
+    }
+    val themeSelectOptionList by remember(localSetting.themeList) {
+        derivedStateOf { localSetting.themeList.map { SelectOption(themeTextMap[it].orEmpty(), it) } }
+    }
+    val launcherDisguiseOptionList by remember {
+        derivedStateOf { LauncherDisguise.entries.map { SelectOption(it.label, it.id) } }
+    }
+    val shuntOptionList by remember(localSetting.shuntList) {
+        derivedStateOf { localSetting.shuntList.map { SelectOption("\u7ebf\u8def $it", it) } }
+    }
+    val prefetchCountOptionList by remember {
+        derivedStateOf {
+            listOf(
+                SelectOption("\u5173\u95ed", "0"),
+                SelectOption("\u4e00\u5f20", "1"),
+                SelectOption("\u4e24\u5f20", "2"),
+                SelectOption("\u4e09\u5f20", "3"),
+                SelectOption("\u56db\u5f20", "4"),
+                SelectOption("\u4e94\u5f20", "5"),
+                SelectOption("\u516d\u5f20", "6")
+            )
+        }
+    }
+    val readModeOptionList by remember {
+        derivedStateOf {
+            listOf(
+                SelectOption("\u6eda\u52a8", "scroll"),
+                SelectOption("\u7ffb\u9875", "page"),
+                SelectOption("\u70b9\u51fb", "tap")
+            )
+        }
+    }
+    val readTapModeOptionList by remember {
+        derivedStateOf {
+            listOf(
+                SelectOption("\u9ed8\u8ba4\u533a\u57df", "default"),
+                SelectOption("\u5de6\u53f3\u4e24\u4fa7", "side")
+            )
+        }
+    }
+    val notificationOptionList by remember {
+        derivedStateOf {
+            listOf(
+                SelectOption("\u5f00\u542f\u5e76\u663e\u793a\u6f2b\u753b\u540d", NOTIFICATION_ON_WITH_NAME),
+                SelectOption("\u5f00\u542f\u4f46\u4e0d\u663e\u793a\u6f2b\u753b\u540d", NOTIFICATION_ON_WITHOUT_NAME),
+                SelectOption("\u5173\u95ed", NOTIFICATION_OFF)
+            )
+        }
+    }
+    SelectDialog(
+        title = settingTitle(settingType),
+        value = settingValue(settingType, localSetting),
+        selectOptionList = when (settingType) {
+            is SettingType.ComicApiSource -> comicApiSourceOptionList
+            is SettingType.Api -> apiSelectOptionList
+            is SettingType.Theme -> themeSelectOptionList
+            is SettingType.LauncherDisguise -> launcherDisguiseOptionList
+            is SettingType.Shunt -> shuntOptionList
+            is SettingType.PrefetchCount -> prefetchCountOptionList
+            is SettingType.ReadMode -> readModeOptionList
+            is SettingType.ReadTapMode -> readTapModeOptionList
+            is SettingType.NotificationManagement -> notificationOptionList
+        },
+        onSelect = {
+            when (settingType) {
+                is SettingType.ComicApiSource -> localSettingManager.updateComicApiSource(it)
+                is SettingType.Api -> localSettingManager.updateApi(it)
+                is SettingType.Theme -> localSettingManager.updateTheme(it)
+                is SettingType.LauncherDisguise -> localSettingManager.updateLauncherDisguise(it)
+                is SettingType.Shunt -> localSettingManager.updateShunt(it)
+                is SettingType.PrefetchCount -> localSettingManager.updatePrefetchCount(it)
+                is SettingType.ReadMode -> localSettingManager.updateReadMode(it)
+                is SettingType.ReadTapMode -> localSettingManager.updateReadTapMode(it)
+                is SettingType.NotificationManagement -> {
+                    localSettingManager.updateNotificationSettings(
+                        show = it != NOTIFICATION_OFF,
+                        showName = it == NOTIFICATION_ON_WITH_NAME
+                    )
+                }
+            }
+            onDismiss()
+        },
+        onDismissRequest = onDismiss
+    )
 }
 
 @Composable
@@ -293,9 +362,7 @@ private fun SettingsSection(
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(24.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainer
-            ),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
             elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
         ) {
             Column(content = content)
@@ -309,6 +376,50 @@ private fun SettingsRow(
     title: String,
     value: String,
     onClick: () -> Unit
+) {
+    SettingsBaseRow(
+        icon = icon,
+        title = title,
+        value = value,
+        onClick = onClick,
+        trailingContent = {
+            Icon(
+                imageVector = Icons.Rounded.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    )
+}
+
+@Composable
+private fun SettingsSwitchRow(
+    icon: ImageVector,
+    title: String,
+    value: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    SettingsBaseRow(
+        icon = icon,
+        title = title,
+        value = if (value) "\u5f00\u542f" else "\u5173\u95ed",
+        onClick = { onCheckedChange(!value) },
+        trailingContent = {
+            Switch(
+                checked = value,
+                onCheckedChange = onCheckedChange
+            )
+        }
+    )
+}
+
+@Composable
+private fun SettingsBaseRow(
+    icon: ImageVector,
+    title: String,
+    value: String,
+    onClick: () -> Unit,
+    trailingContent: @Composable () -> Unit
 ) {
     ListItem(
         modifier = Modifier.clickable(onClick = onClick),
@@ -332,9 +443,7 @@ private fun SettingsRow(
                 }
             }
         },
-        headlineContent = {
-            Text(text = title, style = MaterialTheme.typography.bodyLarge)
-        },
+        headlineContent = { Text(text = title, style = MaterialTheme.typography.bodyLarge) },
         supportingContent = {
             Text(
                 text = value,
@@ -344,65 +453,55 @@ private fun SettingsRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         },
-        trailingContent = {
-            Icon(
-                imageVector = Icons.Rounded.ChevronRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        },
-        colors = androidx.compose.material3.ListItemDefaults.colors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainer
-        )
+        trailingContent = trailingContent,
+        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
     )
 }
 
 private fun prefetchText(value: Int): String {
     return when (value) {
-        0 -> "关闭"
-        1 -> "预载一张"
-        2 -> "预载两张"
-        3 -> "预载三张"
-        else -> "$value 张"
+        0 -> "\u5173\u95ed"
+        1 -> "\u4e00\u5f20"
+        2 -> "\u4e24\u5f20"
+        3 -> "\u4e09\u5f20"
+        else -> "$value \u5f20"
     }
 }
 
 private fun readModeText(value: String): String {
     return when (value) {
-        "scroll" -> "滚动模式"
-        "page" -> "翻页模式"
-        "tap" -> "点击模式"
-        else -> "滚动模式"
+        "scroll" -> "\u6eda\u52a8"
+        "page" -> "\u7ffb\u9875"
+        "tap" -> "\u70b9\u51fb"
+        else -> "\u6eda\u52a8"
     }
-}
-
-private fun enabledText(value: Boolean): String {
-    return if (value) "开启" else "关闭"
 }
 
 private fun notificationText(localSetting: LocalSetting): String {
     return when {
-        !localSetting.showComicCacheNotification -> "关闭通知"
-        localSetting.showComicCacheNotificationName -> "开启并显示漫画名"
-        else -> "开启但不显示漫画名"
+        !localSetting.showComicCacheNotification -> "\u5173\u95ed"
+        localSetting.showComicCacheNotificationName -> "\u5f00\u542f\u5e76\u663e\u793a\u6f2b\u753b\u540d"
+        else -> "\u5f00\u542f\u4f46\u4e0d\u663e\u793a\u6f2b\u753b\u540d"
     }
 }
 
 private fun settingTitle(type: SettingType): String {
     return when (type) {
-        is SettingType.Api -> "切换接口"
-        is SettingType.Theme -> "切换主题"
-        is SettingType.LauncherDisguise -> "图标伪装"
-        is SettingType.Shunt -> "线路选择"
-        is SettingType.PrefetchCount -> "图片预载数量"
-        is SettingType.ReadMode -> "阅读模式"
-        is SettingType.ReadTapMode -> "点击翻图"
-        is SettingType.NotificationManagement -> "通知管理"
+        is SettingType.ComicApiSource -> "\u6570\u636e\u6e90"
+        is SettingType.Api -> "API"
+        is SettingType.Theme -> "\u4e3b\u9898"
+        is SettingType.LauncherDisguise -> "\u56fe\u6807\u4f2a\u88c5"
+        is SettingType.Shunt -> "\u56fe\u7247\u7ebf\u8def"
+        is SettingType.PrefetchCount -> "\u56fe\u7247\u9884\u52a0\u8f7d"
+        is SettingType.ReadMode -> "\u9605\u8bfb\u6a21\u5f0f"
+        is SettingType.ReadTapMode -> "\u70b9\u51fb\u7ffb\u56fe"
+        is SettingType.NotificationManagement -> "\u901a\u77e5\u7ba1\u7406"
     }
 }
 
 private fun settingValue(type: SettingType, localSetting: LocalSetting): String {
     return when (type) {
+        is SettingType.ComicApiSource -> localSetting.comicApiSource
         is SettingType.Api -> localSetting.api
         is SettingType.Theme -> localSetting.theme
         is SettingType.LauncherDisguise -> LauncherDisguise.fromId(localSetting.launcherDisguise).id

@@ -1,6 +1,11 @@
 package com.par9uet.jm.storage
 
+import com.google.gson.JsonParser
 import com.google.gson.reflect.TypeToken
+import com.par9uet.jm.data.models.APP_LOCK_TYPE_PASSWORD
+import com.par9uet.jm.data.models.APP_LOCK_TYPE_PATTERN
+import com.par9uet.jm.data.models.COMIC_API_SOURCE_BUILTIN
+import com.par9uet.jm.data.models.COMIC_API_SOURCE_NETWORK
 import com.par9uet.jm.data.models.LauncherDisguise
 import com.par9uet.jm.data.models.LocalSetting
 import com.par9uet.jm.utils.normalizeBlockedTagList
@@ -33,7 +38,23 @@ class LocalSettingStorage(
                     STORAGE_KEY,
                     object : TypeToken<LocalSetting>() {}.type
                 ) ?: LocalSetting()
+                // 旧版本字段 appLockType 迁移到 appLockUnlockMode
+                val legacyAppLockType = parseLegacyAppLockType(savedJson)
+                val migratedUnlockMode = if (savedJson.hasField("appLockUnlockMode")) {
+                    saved.appLockUnlockMode
+                } else if (legacyAppLockType != null) {
+                    legacyAppLockType
+                } else {
+                    APP_LOCK_TYPE_PASSWORD
+                }
                 saved.copy(
+                    comicApiSource = if (savedJson.hasField("comicApiSource")) {
+                        listOf(COMIC_API_SOURCE_BUILTIN, COMIC_API_SOURCE_NETWORK)
+                            .firstOrNull { it == saved.comicApiSource }
+                            ?: COMIC_API_SOURCE_BUILTIN
+                    } else {
+                        COMIC_API_SOURCE_BUILTIN
+                    },
                     showComicCacheNotification = if (savedJson.hasField("showComicCacheNotification")) {
                         saved.showComicCacheNotification
                     } else {
@@ -51,11 +72,27 @@ class LocalSettingStorage(
                     },
                     blockedTagList = normalizeBlockedTagList(
                         runCatching { saved.blockedTagList }.getOrNull() ?: listOf()
-                    )
+                    ),
+                    appLockPassword = if (savedJson.hasField("appLockPassword")) {
+                        saved.appLockPassword ?: ""
+                    } else {
+                        ""
+                    },
+                    appLockPasswordLength = if (savedJson.hasField("appLockPasswordLength")) {
+                        saved.appLockPasswordLength.coerceIn(4, 8)
+                    } else {
+                        4
+                    },
+                    appLockPattern = if (savedJson.hasField("appLockPattern")) {
+                        saved.appLockPattern ?: ""
+                    } else {
+                        ""
+                    },
+                    appLockUnlockMode = migratedUnlockMode
                 )
             }
         }
-        return _state.value!!
+        return _state.value ?: LocalSetting()
     }
 
     fun remove() {
@@ -68,4 +105,20 @@ class LocalSettingStorage(
 
 private fun String?.hasField(name: String): Boolean {
     return this?.contains("\"$name\"") == true
+}
+
+/**
+ * 解析旧版本存储中的 appLockType 字段（已废弃，迁移到 appLockUnlockMode）
+ */
+private fun parseLegacyAppLockType(json: String?): String? {
+    if (json.isNullOrBlank()) return null
+    return runCatching {
+        val obj = JsonParser.parseString(json).asJsonObject
+        if (!obj.has("appLockType")) return null
+        val value = obj.get("appLockType").asString
+        when (value) {
+            APP_LOCK_TYPE_PATTERN -> APP_LOCK_TYPE_PATTERN
+            else -> APP_LOCK_TYPE_PASSWORD
+        }
+    }.getOrNull()
 }
