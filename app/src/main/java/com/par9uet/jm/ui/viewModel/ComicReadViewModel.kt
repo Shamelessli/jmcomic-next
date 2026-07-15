@@ -28,6 +28,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import java.io.File
 import java.io.FileOutputStream
 import java.util.zip.ZipInputStream
@@ -60,6 +62,19 @@ class ComicReadViewModel(
     val size: Int get() = _comicPicState.value.data?.size ?: 0
 
     private val prefetchSet = mutableSetOf<Int>()
+    // 内存优化模式下的并发解码信号量，按需创建
+    private var decodeSemaphore: Semaphore? = null
+    private var decodeSemaphorePermits: Int = 0
+    private fun getDecodeSemaphore(): Semaphore? {
+        val setting = localSettingManager.localSettingState.value
+        if (!setting.readMemoryOptEnabled) return null
+        val target = setting.readDecodeConcurrency.coerceAtLeast(1)
+        if (decodeSemaphore == null || decodeSemaphorePermits != target) {
+            decodeSemaphore = Semaphore(target)
+            decodeSemaphorePermits = target
+        }
+        return decodeSemaphore
+    }
 
     fun getComicDetail(comicId: Int) {
         viewModelScope.launch {
@@ -334,8 +349,21 @@ class ComicReadViewModel(
             onComplete?.invoke()
             return
         }
+        val setting = localSettingManager.localSettingState.value
+        val downscale = setting.readMemoryOptEnabled
+        val semaphore = getDecodeSemaphore()
         viewModelScope.launch {
-            comicPicImageState.decode(context)
+            try {
+                if (semaphore != null) {
+                    semaphore.withPermit {
+                        comicPicImageState.decode(context, downscale = downscale)
+                    }
+                } else {
+                    comicPicImageState.decode(context, downscale = false)
+                }
+            } catch (e: Exception) {
+                log("decode index $index failed: ${e.message}")
+            }
             onComplete?.invoke()
         }
         prefetchSet.add(index)

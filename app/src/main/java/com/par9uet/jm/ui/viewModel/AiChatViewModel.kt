@@ -32,6 +32,7 @@ class AiChatViewModel(
         val activeConversationId: String = "",
         val input: String = "",
         val webSearchEnabled: Boolean = false,
+        val deepThinkingEnabled: Boolean = false,
         val searchSettings: AiSearchSettings = AiSearchSettings(),
         val isSending: Boolean = false,
         val errorMessage: String? = null
@@ -62,6 +63,10 @@ class AiChatViewModel(
 
     fun changeWebSearchEnabled(value: Boolean) {
         _uiState.update { it.copy(webSearchEnabled = value) }
+    }
+
+    fun changeDeepThinkingEnabled(value: Boolean) {
+        _uiState.update { it.copy(deepThinkingEnabled = value) }
     }
 
     fun changeSearchSettings(settings: AiSearchSettings) {
@@ -159,6 +164,7 @@ class AiChatViewModel(
             userQuery = text,
             retryInstruction = null,
             webSearchEnabled = current.webSearchEnabled,
+            deepThinkingEnabled = current.deepThinkingEnabled,
             searchSettings = current.searchSettings
         )
     }
@@ -204,6 +210,7 @@ class AiChatViewModel(
             userQuery = previousUserMessage.content,
             retryInstruction = retryInstruction(mode),
             webSearchEnabled = current.webSearchEnabled,
+            deepThinkingEnabled = current.deepThinkingEnabled,
             searchSettings = current.searchSettings
         )
     }
@@ -272,6 +279,7 @@ class AiChatViewModel(
             userQuery = text,
             retryInstruction = null,
             webSearchEnabled = current.webSearchEnabled,
+            deepThinkingEnabled = current.deepThinkingEnabled,
             searchSettings = current.searchSettings
         )
     }
@@ -321,6 +329,7 @@ class AiChatViewModel(
         userQuery: String,
         retryInstruction: String?,
         webSearchEnabled: Boolean,
+        deepThinkingEnabled: Boolean,
         searchSettings: AiSearchSettings
     ) {
         sendJob = viewModelScope.launch {
@@ -332,7 +341,8 @@ class AiChatViewModel(
                         webSearchEnabled = webSearchEnabled,
                         settings = searchSettings
                     ),
-                    retryInstruction = retryInstruction
+                    retryInstruction = retryInstruction,
+                    deepThinkingEnabled = deepThinkingEnabled
                 )
                 aiChatRepository.streamChat(messages = requestMessages) { delta ->
                     appendAssistantDelta(conversationId, assistantMessageId, delta)
@@ -399,16 +409,22 @@ class AiChatViewModel(
     private fun buildRequestMessages(
         messages: List<AiChatMessage>,
         webContext: String?,
-        retryInstruction: String?
+        retryInstruction: String?,
+        deepThinkingEnabled: Boolean
     ): List<OpenAiChatMessage> {
         val today = todayText()
         val requestMessages = messages.map {
             OpenAiChatMessage(role = it.role, content = it.content)
         }
+        val baseSystemPrompt = if (deepThinkingEnabled) {
+            "当前日期是 $today。请先用 <think></think> 标签包裹你的思考过程（包含分析、推理和决策步骤），然后在标签外输出给用户看的正式回答。涉及新闻、版本、价格、政策、人物职位、时间敏感信息时，优先使用客户端提供的联网搜索结果；没有可靠搜索结果时必须说明无法确认最新信息。"
+        } else {
+            "当前日期是 $today。请直接输出给用户看的正式回答，不要输出内部推理过程、隐藏分析标记或占位内容。涉及新闻、版本、价格、政策、人物职位、时间敏感信息时，优先使用客户端提供的联网搜索结果；没有可靠搜索结果时必须说明无法确认最新信息。"
+        }
         val systemPrompts = mutableListOf(
             OpenAiChatMessage(
                 role = "system",
-                content = "当前日期是 $today。请直接输出给用户看的正式回答，不要输出内部推理过程、隐藏分析标记或占位内容。涉及新闻、版本、价格、政策、人物职位、时间敏感信息时，优先使用客户端提供的联网搜索结果；没有可靠搜索结果时必须说明无法确认最新信息。"
+                content = baseSystemPrompt
             )
         )
 

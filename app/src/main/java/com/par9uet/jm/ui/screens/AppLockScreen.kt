@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -18,6 +19,9 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Backspace
@@ -82,17 +86,22 @@ fun AppLockScreen(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
     ) {
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
                 .navigationBarsPadding(),
             contentAlignment = Alignment.Center
         ) {
+            // 平板模式下限制内容宽度，避免键盘区域过宽导致需要滚动
+            val maxContentWidth = if (maxWidth >= 600.dp) 420.dp else maxWidth
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .widthIn(max = maxContentWidth)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
             ) {
                 Surface(
                     modifier = Modifier.size(56.dp),
@@ -248,7 +257,6 @@ private fun NumericKeypad(
     onDigit: (Int) -> Unit,
     onDelete: () -> Unit
 ) {
-    val keys = listOf(1, 2, 3, 4, 5, 6, 7, 8, 9)
     val keyColor = MaterialTheme.colorScheme.surfaceContainerHigh
     val contentColor = MaterialTheme.colorScheme.onSurface
 
@@ -257,13 +265,23 @@ private fun NumericKeypad(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-            keys.take(3).forEach { KeyButton(it, keyColor, contentColor, onDigit) }
+            KeyButton(1, keyColor, contentColor, onDigit)
+            KeyButton(2, keyColor, contentColor, onDigit)
+            KeyButton(3, keyColor, contentColor, onDigit)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-            keys.drop(3).take(3).forEach { KeyButton(it, keyColor, contentColor, onDigit) }
+            KeyButton(4, keyColor, contentColor, onDigit)
+            KeyButton(5, keyColor, contentColor, onDigit)
+            KeyButton(6, keyColor, contentColor, onDigit)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-            keys.drop(6).forEach { KeyButton(it, keyColor, contentColor, onDigit) }
+            KeyButton(7, keyColor, contentColor, onDigit)
+            KeyButton(8, keyColor, contentColor, onDigit)
+            KeyButton(9, keyColor, contentColor, onDigit)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            Spacer(modifier = Modifier.size(68.dp))
+            KeyButton(0, keyColor, contentColor, onDigit)
             DeleteButton(keyColor, contentColor, onDelete)
         }
     }
@@ -524,6 +542,7 @@ fun SetAppLockPasswordDialog(
 
     BasicAlertDialog(onDismissRequest = onDismiss) {
         Card(
+            modifier = Modifier.widthIn(max = 400.dp),
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
             ),
@@ -532,6 +551,7 @@ fun SetAppLockPasswordDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
                     .padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {

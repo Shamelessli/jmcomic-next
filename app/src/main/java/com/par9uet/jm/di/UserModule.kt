@@ -11,5 +11,5 @@ import org.koin.dsl.module
 val userModule = module {
     single { UserRepositoryImpl(get(), get(), get(), get(), get()) } bind UserRepository::class
 
-    viewModel { UserViewModel(get(), get(), get(), get(), get()) }
+    viewModel { UserViewModel(get(), get(), get(), get(), get(), get()) }
 }

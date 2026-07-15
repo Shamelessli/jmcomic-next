@@ -4,8 +4,11 @@ import android.content.Context
 import coil.ImageLoader
 import coil.disk.DiskCache
 import com.par9uet.jm.cache.getCommonCacheDir
+import com.par9uet.jm.utils.applyTlsCompat
+import okhttp3.ConnectionSpec
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
+import okhttp3.TlsVersion
 
 private val cdnHeaderInterceptor = Interceptor { chain ->
     val request = chain.request().newBuilder()
@@ -20,6 +23,7 @@ fun createAsyncImageLoader(context: Context): ImageLoader {
         .okHttpClient {
             OkHttpClient.Builder()
                 .addInterceptor(cdnHeaderInterceptor)
+                .applyTlsCompat()
                 .build()
         }
         .diskCache {

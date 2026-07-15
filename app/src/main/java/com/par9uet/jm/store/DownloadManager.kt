@@ -168,6 +168,27 @@ class DownloadManager(
         }
     }
 
+    /**
+     * 恢复已暂停的下载任务：更新状态为 pending 并重新入队 WorkManager。
+     * 与 retryDownload 不同，不会重置已下载进度，而是从断点继续。
+     */
+    fun resumeDownloads(comicIds: List<Int>) {
+        if (comicIds.isEmpty()) return
+        scope.launch(Dispatchers.IO) {
+            val validIds = comicIds.filter { id ->
+                val task = downloadComicDao.getById(id)
+                task != null && task.status != "complete"
+            }.distinct()
+            if (validIds.isEmpty()) {
+                toastManager.showAsync("没有可恢复的下载任务")
+                return@launch
+            }
+            downloadComicDao.updateStatusByIds(validIds, "pending")
+            enqueueDownloads(validIds)
+            toastManager.showAsync("已恢复 ${validIds.size} 个下载任务")
+        }
+    }
+
     fun retryGroup(groupId: Int) {
         scope.launch(Dispatchers.IO) {
             val chapters = downloadComicDao.getByGroupId(groupId)
@@ -181,6 +202,35 @@ class DownloadManager(
             }
             enqueueDownloads(errorIds)
             toastManager.showAsync("已重新加入 ${errorIds.size} 个下载任务")
+        }
+    }
+
+    fun redownloadGroup(groupId: Int) {
+        scope.launch(Dispatchers.IO) {
+            val items = downloadComicDao.getByGroupId(groupId)
+            if (items.isEmpty()) return@launch
+            items.forEach { item ->
+                runCatching {
+                    val zipFile = java.io.File(item.zipPath)
+                    if (zipFile.exists()) {
+                        if (zipFile.isDirectory) {
+                            zipFile.deleteRecursively()
+                        } else {
+                            zipFile.delete()
+                        }
+                    }
+                }
+                val coverFile = java.io.File(item.coverPath)
+                if (coverFile.exists()) coverFile.delete()
+                downloadComicDao.updateStatus(
+                    com.par9uet.jm.database.model.UpdateComicStatus(item.id, "pending")
+                )
+                downloadComicDao.updateProgress(
+                    com.par9uet.jm.database.model.UpdateComicProgress(item.id, 0f)
+                )
+            }
+            enqueueDownloads(items.map { it.id })
+            toastManager.showAsync("已重新下载 ${items.size} 个任务")
         }
     }
 }

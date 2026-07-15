@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Leaderboard
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -410,6 +411,12 @@ fun UserScreen(
                     icon = Icons.Default.Settings,
                     label = "设置",
                     onClick = { mainNavController.navigate("appLocalSetting") }
+                )
+                MenuDivider()
+                MenuItem(
+                    icon = Icons.Default.Tune,
+                    label = "标签排除",
+                    onClick = { mainNavController.navigate("blockedTags") }
                 )
                 if (isLogin) {
                     MenuDivider()

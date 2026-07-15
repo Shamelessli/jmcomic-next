@@ -26,6 +26,8 @@ class AiChatRepository(
         private const val TARGET_API = "https://app.unlimitedai.chat/api/chat"
         private const val DEVICE_ID = ""
         private const val COOKIES = ""
+        const val THINK_OPEN = "\u003Cthink\u003E"
+        const val THINK_CLOSE = "\u003C/think\u003E"
     }
 
     private val client = OkHttpClient.Builder()
@@ -149,6 +151,7 @@ class AiChatRepository(
             }
 
             val bodySource = responseBody.source()
+            var inReasoning = false
             while (!bodySource.exhausted()) {
                 val line = bodySource.readUtf8Line() ?: continue
                 val text = line.trim()
@@ -169,11 +172,23 @@ class AiChatRepository(
 
                 val type = json.get("type")?.asString.orEmpty()
                 val delta = json.stringValue("delta", "text", "content").orEmpty()
-                val answerDelta = if (type.contains("reason", ignoreCase = true)) "" else delta
+                val isReasoning = type.contains("reason", ignoreCase = true)
 
-                if (answerDelta.isNotEmpty()) {
-                    onDelta(answerDelta)
+                if (isReasoning && !inReasoning) {
+                    onDelta(THINK_OPEN)
+                    inReasoning = true
                 }
+                if (!isReasoning && inReasoning) {
+                    onDelta(THINK_CLOSE)
+                    inReasoning = false
+                }
+
+                if (delta.isNotEmpty()) {
+                    onDelta(delta)
+                }
+            }
+            if (inReasoning) {
+                onDelta(THINK_CLOSE)
             }
         }
     }

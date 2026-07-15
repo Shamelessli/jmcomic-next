@@ -5,6 +5,7 @@ import com.par9uet.jm.cache.getCommonCacheDir
 import com.par9uet.jm.utils.APP_UPDATE_NOTIFICATION_ID
 import com.par9uet.jm.utils.cancelProgressNotification
 import com.par9uet.jm.utils.showProgressNotification
+import com.par9uet.jm.utils.showUpdateDownloadedNotification
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -182,7 +183,11 @@ class AppUpdateDownloadManager(
                     )
                 }
                 cancelProgressNotification(context, APP_UPDATE_NOTIFICATION_ID)
-                toastManager.showAsync("更新包下载完成")
+                showUpdateDownloadedNotification(
+                    context = context,
+                    version = request.version,
+                    savedPath = file.absolutePath
+                )
             }
         }.onFailure { throwable ->
             if (!canceled) {

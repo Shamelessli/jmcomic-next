@@ -18,6 +18,7 @@ interface UserRepository {
     ): NetWorkResult<UserCollectComicListResponse>
 
     suspend fun getHistoryComicList(page: Int = 1): NetWorkResult<UserHistoryComicListResponse>
+    suspend fun deleteHistoryComic(id: Int): NetWorkResult<Unit>
     suspend fun getHistoryCommentList(
         page: Int = 1,
         userId: Int

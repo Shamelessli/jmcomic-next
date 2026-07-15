@@ -56,14 +56,23 @@ class ComicPicImageState(
 
     var imageResultState by mutableStateOf<ImageResultState>(ImageResultState.Loading)
 
-    suspend fun decode(context: Context) {
+    suspend fun decode(context: Context, downscale: Boolean = false) {
         withContext(Dispatchers.Default) {
             imageResultState = ImageResultState.Loading
-            decodeImage(context)
+            try {
+                decodeImage(context, downscale)
+            } catch (e: OutOfMemoryError) {
+                logError("ComicPicImage", "解码图片 OOM: ${e.message}")
+                System.gc()
+                imageResultState = ImageResultState.Failure("内存不足，无法解码图片")
+            } catch (e: Exception) {
+                logError("ComicPicImage", "解码图片异常: ${e.stackTraceToString()}")
+                imageResultState = ImageResultState.Failure("图片解码失败：${e.message ?: "未知错误"}")
+            }
         }
     }
 
-    private suspend fun decodeImage(context: Context) {
+    private suspend fun decodeImage(context: Context, downscale: Boolean = false) {
         val cacheDir = getCommonPicDecodeCacheDir(context, comicId)
         if (!cacheDir.exists()) {
             cacheDir.mkdirs()
@@ -73,12 +82,24 @@ class ComicPicImageState(
 
         // 检查缓存文件是否存在
         if (cacheFile.exists()) {
-            val decodeImageBitmap =
-                BitmapFactory.decodeFile(cacheFile.absolutePath).asImageBitmap()
-            val decodeImageAspectRatio =
-                decodeImageBitmap.width * 1.0f / decodeImageBitmap.height
-            imageResultState = ImageResultState.Success(decodeImageBitmap, decodeImageAspectRatio)
-            return
+            try {
+                val options = if (downscale) {
+                    BitmapFactory.Options().apply { inSampleSize = 2 }
+                } else null
+                val decodeImageBitmap =
+                    BitmapFactory.decodeFile(cacheFile.absolutePath, options)?.asImageBitmap()
+                        ?: run {
+                            cacheFile.delete()
+                            throw IllegalStateException("缓存图片解码为空")
+                        }
+                val decodeImageAspectRatio =
+                    decodeImageBitmap.width * 1.0f / decodeImageBitmap.height
+                imageResultState = ImageResultState.Success(decodeImageBitmap, decodeImageAspectRatio)
+                return
+            } catch (e: Exception) {
+                logError("ComicPicImage", "缓存图片解码失败，删除并重新解码: ${e.message}")
+                cacheFile.delete()
+            }
         }
 
         // 加载原始图片
@@ -92,20 +113,29 @@ class ComicPicImageState(
 
         when (val result = picImageLoader.execute(request)) {
             is SuccessResult -> {
-                val originalBitmap = result.drawable.toBitmap()
-                val originalImageBitmap = originalBitmap.asImageBitmap()
-                val decodeImageAspectRatio =
-                    originalImageBitmap.width * 1.0f / originalImageBitmap.height
-                var decodedImageBitmap = originalImageBitmap
-                if (isGif() || comicId <= __scrambleId || __speed == "1") {
-                    saveBitmapAsWebp(originalBitmap, cacheFile)
-                } else {
-                    val decodedBitmap = decodeBitmap(originalBitmap, page)
-                    saveBitmapAsWebp(decodedBitmap, cacheFile)
-                    decodedImageBitmap = decodedBitmap.asImageBitmap()
+                try {
+                    val originalBitmap = result.drawable.toBitmap()
+                    val originalImageBitmap = originalBitmap.asImageBitmap()
+                    val decodeImageAspectRatio =
+                        originalImageBitmap.width * 1.0f / originalImageBitmap.height
+                    var decodedImageBitmap = originalImageBitmap
+                    if (isGif() || comicId <= __scrambleId || __speed == "1") {
+                        saveBitmapAsWebp(originalBitmap, cacheFile)
+                    } else {
+                        val decodedBitmap = decodeBitmap(originalBitmap, page)
+                        saveBitmapAsWebp(decodedBitmap, cacheFile)
+                        decodedImageBitmap = decodedBitmap.asImageBitmap()
+                    }
+                    imageResultState =
+                        ImageResultState.Success(decodedImageBitmap, decodeImageAspectRatio)
+                } catch (e: OutOfMemoryError) {
+                    logError("ComicPicImage", "图片处理 OOM: ${e.message}")
+                    System.gc()
+                    imageResultState = ImageResultState.Failure("内存不足")
+                } catch (e: Exception) {
+                    logError("ComicPicImage", "图片处理失败: ${e.stackTraceToString()}")
+                    imageResultState = ImageResultState.Failure("图片处理失败：${e.message ?: "未知错误"}")
                 }
-                imageResultState =
-                    ImageResultState.Success(decodedImageBitmap, decodeImageAspectRatio)
             }
 
             is ErrorResult -> {
@@ -118,7 +148,10 @@ class ComicPicImageState(
                 }
                 if (fetchedBytes != null) {
                     try {
-                        val originalBitmap = BitmapFactory.decodeByteArray(fetchedBytes, 0, fetchedBytes.size)
+                        val options = if (downscale) {
+                            BitmapFactory.Options().apply { inSampleSize = 2 }
+                        } else null
+                        val originalBitmap = BitmapFactory.decodeByteArray(fetchedBytes, 0, fetchedBytes.size, options)
                         if (originalBitmap != null) {
                             val originalImageBitmap = originalBitmap.asImageBitmap()
                             val decodeImageAspectRatio =
@@ -135,6 +168,11 @@ class ComicPicImageState(
                                 ImageResultState.Success(decodedImageBitmap, decodeImageAspectRatio)
                             return
                         }
+                    } catch (e: OutOfMemoryError) {
+                        logError("ComicPicImage", "内置API图片解码 OOM: ${e.message}")
+                        System.gc()
+                        imageResultState = ImageResultState.Failure("内存不足")
+                        return
                     } catch (e: Exception) {
                         logError("ComicPicImage", "内置API图片解码失败: ${e.stackTraceToString()}")
                     }

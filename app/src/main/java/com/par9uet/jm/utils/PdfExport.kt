@@ -80,6 +80,8 @@ fun exportComicsToSeparatePdf(
     return comics.map { exportComicToPdf(context, it, treeUri) }
 }
 
+private const val PDF_MAX_BITMAP_DIMENSION = 2000
+
 private fun writeImagesToPdf(
     context: Context,
     treeUri: Uri,
@@ -95,19 +97,32 @@ private fun writeImagesToPdf(
         fileName
     ) ?: throw IllegalStateException("无法创建 PDF 文件")
 
+    val failedPages = mutableListOf<Int>()
     context.contentResolver.openOutputStream(outputUri)?.use { output ->
         val document = PdfDocument()
+        var pageIndex = 0
         try {
             imageFiles.forEachIndexed { index, file ->
-                val bitmap = BitmapFactory.decodeFile(file.absolutePath)
-                    ?: return@forEachIndexed
-                val pageWidth = bitmap.width.coerceAtLeast(1)
-                val pageHeight = bitmap.height.coerceAtLeast(1)
-                val pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, index + 1).create()
-                val page = document.startPage(pageInfo)
-                page.canvas.drawBitmap(bitmap, 0f, 0f, null)
-                document.finishPage(page)
-                bitmap.recycle()
+                try {
+                    val bitmap = decodeBitmapForPdf(file.absolutePath)
+                        ?: run {
+                            failedPages.add(index + 1)
+                            return@forEachIndexed
+                        }
+                    val pageWidth = bitmap.width.coerceAtLeast(1)
+                    val pageHeight = bitmap.height.coerceAtLeast(1)
+                    val pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageIndex + 1).create()
+                    val page = document.startPage(pageInfo)
+                    page.canvas.drawBitmap(bitmap, 0f, 0f, null)
+                    document.finishPage(page)
+                    pageIndex++
+                    bitmap.recycle()
+                } catch (e: OutOfMemoryError) {
+                    System.gc()
+                    failedPages.add(index + 1)
+                } catch (e: Exception) {
+                    failedPages.add(index + 1)
+                }
             }
             document.writeTo(output)
         } finally {
@@ -115,7 +130,38 @@ private fun writeImagesToPdf(
         }
     } ?: throw IllegalStateException("无法写入 PDF 文件")
 
+    if (failedPages.isNotEmpty() && failedPages.size == imageFiles.size) {
+        throw IllegalStateException("所有图片导出失败，可能内存不足或图片损坏")
+    }
+
     return outputUri.toString()
+}
+
+private fun decodeBitmapForPdf(path: String): Bitmap? {
+    val boundsOptions = BitmapFactory.Options().apply {
+        inJustDecodeBounds = true
+    }
+    BitmapFactory.decodeFile(path, boundsOptions)
+    val width = boundsOptions.outWidth
+    val height = boundsOptions.outHeight
+    if (width <= 0 || height <= 0) return null
+
+    val sampleSize = calculateSampleSize(width, height)
+    val options = BitmapFactory.Options().apply {
+        inSampleSize = sampleSize
+        inPreferredConfig = Bitmap.Config.RGB_565
+    }
+    return BitmapFactory.decodeFile(path, options)
+}
+
+private fun calculateSampleSize(width: Int, height: Int): Int {
+    var sampleSize = 1
+    var maxDim = maxOf(width, height)
+    while (maxDim / sampleSize > PDF_MAX_BITMAP_DIMENSION) {
+        sampleSize *= 2
+        maxDim /= 2
+    }
+    return sampleSize
 }
 
 private fun getComicImageDir(context: Context, comic: DownloadComic): File? {

@@ -21,11 +21,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Reply
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material.icons.filled.ThumbUpOffAlt
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -86,7 +90,10 @@ private fun CommentListSkeleton() {
 }
 
 @Composable
-private fun ReplyComment(comment: Comment) {
+private fun ReplyComment(
+    comment: Comment,
+    onReply: () -> Unit,
+) {
     val annotatedString = buildAnnotatedString {
         withStyle(
             style = SpanStyle(
@@ -99,49 +106,120 @@ private fun ReplyComment(comment: Comment) {
         append(": ")
         append(AnnotatedString.fromHtml(htmlString = comment.content).trim())
     }
-    Text(text = annotatedString, softWrap = true, fontSize = 12.sp)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            modifier = Modifier.weight(1f),
+            text = annotatedString,
+            softWrap = true,
+            fontSize = 12.sp
+        )
+        TextButton(
+            modifier = Modifier.height(28.dp),
+            contentPadding = PaddingValues(horizontal = 4.dp),
+            onClick = onReply
+        ) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Outlined.Reply,
+                contentDescription = "回复 ${comment.username}",
+                modifier = Modifier.size(14.dp)
+            )
+            Spacer(modifier = Modifier.width(3.dp))
+            Text("回复", fontSize = 11.sp)
+        }
+    }
 }
 
 @Composable
-private fun CommentWithAction(comment: Comment, onReply: (() -> Unit)? = null) {
+private fun CommentWithAction(
+    comment: Comment,
+    isLiked: Boolean,
+    onReply: ((Comment) -> Unit)? = null,
+    onLike: (() -> Unit)? = null,
+) {
+    var repliesExpanded by remember { mutableStateOf(false) }
+    val replyCount = comment.replyCommentList.size
+
     Comment(comment) {
         Column {
-            Row {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(
                     modifier = Modifier.height(30.dp),
                     contentPadding = PaddingValues(0.dp),
-                    onClick = { onReply?.invoke() }
+                    onClick = { onReply?.invoke(comment) }
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Outlined.Reply,
-                        contentDescription = "\u56de\u590d",
+                        contentDescription = "回复",
                         modifier = Modifier.size(14.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(text = "\u56de\u590d", fontSize = 12.sp)
+                    Text(text = "回复", fontSize = 12.sp)
                 }
                 Spacer(modifier = Modifier.weight(1f))
                 TextButton(
                     modifier = Modifier.height(30.dp),
                     contentPadding = PaddingValues(0.dp),
-                    onClick = {}
+                    onClick = { onLike?.invoke() }
                 ) {
                     Icon(
-                        imageVector = Icons.Default.ThumbUpOffAlt,
-                        contentDescription = "\u70b9\u8d5e",
-                        modifier = Modifier.size(14.dp)
+                        imageVector = if (isLiked) Icons.Filled.ThumbUp else Icons.Default.ThumbUpOffAlt,
+                        contentDescription = "点赞",
+                        modifier = Modifier.size(14.dp),
+                        tint = if (isLiked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(text = "${comment.likeCount}", fontSize = 12.sp)
+                    Text(
+                        text = "${comment.likeCount + (if (isLiked) 1 else 0)}",
+                        fontSize = 12.sp,
+                        color = if (isLiked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
-            if (comment.replyCommentList.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(6.dp))
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-                        comment.replyCommentList.forEach {
-                            key(it.id) {
-                                ReplyComment(it)
+            // 有回复时显示展开/折叠按钮
+            if (replyCount > 0) {
+                Spacer(modifier = Modifier.height(4.dp))
+                TextButton(
+                    modifier = Modifier.height(28.dp),
+                    contentPadding = PaddingValues(0.dp),
+                    onClick = { repliesExpanded = !repliesExpanded }
+                ) {
+                    Icon(
+                        imageVector = if (repliesExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = if (repliesExpanded) "收起回复" else "展开 $replyCount 条回复",
+                        fontSize = 12.sp
+                    )
+                }
+                if (repliesExpanded) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                            comment.replyCommentList.forEach {
+                                key(it.id) {
+                                    ReplyComment(
+                                        comment = it,
+                                        onReply = { onReply?.invoke(it) }
+                                    )
+                                    if (it != comment.replyCommentList.last()) {
+                                        HorizontalDivider(
+                                            modifier = Modifier.padding(vertical = 4.dp),
+                                            color = MaterialTheme.colorScheme.outlineVariant
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -164,6 +242,7 @@ fun ComicCommentArea(
     val isLogin by userManager.isLoginState.collectAsState(false)
     val commentInputFocusRequester = remember { FocusRequester() }
     val commentLazyPagingItems = comicDetailViewModel.commentPager.collectAsLazyPagingItems()
+    val likedCommentIds by comicDetailViewModel.likedCommentIds.collectAsState()
     var replyComment by remember(comicId) { mutableStateOf<Comment?>(null) }
 
     // 评论页独立使用时拉取漫画详情，用于在标题栏显示漫画标题与 JM 编码
@@ -220,11 +299,19 @@ fun ComicCommentArea(
                 modifier = modifier,
                 commentLazyPagingItems = commentLazyPagingItems,
                 isLogin = isLogin,
+                likedCommentIds = likedCommentIds,
                 onLogin = { mainNavController.navigate("login") },
                 onReply = {
                     focusManager.clearFocus()
                     commentInputFocusRequester.requestFocus()
                     replyComment = it
+                },
+                onLike = { commentId ->
+                    if (isLogin) {
+                        comicDetailViewModel.likeComment(commentId)
+                    } else {
+                        mainNavController.navigate("login")
+                    }
                 }
             )
         }
@@ -251,11 +338,19 @@ fun ComicCommentArea(
                     .weight(1f),
                 commentLazyPagingItems = commentLazyPagingItems,
                 isLogin = isLogin,
+                likedCommentIds = likedCommentIds,
                 onLogin = { mainNavController.navigate("login") },
                 onReply = {
                     focusManager.clearFocus()
                     commentInputFocusRequester.requestFocus()
                     replyComment = it
+                },
+                onLike = { commentId ->
+                    if (isLogin) {
+                        comicDetailViewModel.likeComment(commentId)
+                    } else {
+                        mainNavController.navigate("login")
+                    }
                 }
             )
             inputBar()
@@ -268,8 +363,10 @@ private fun CommentList(
     modifier: Modifier = Modifier,
     commentLazyPagingItems: LazyPagingItems<Comment>,
     isLogin: Boolean,
+    likedCommentIds: Set<Int>,
     onLogin: () -> Unit,
-    onReply: (Comment) -> Unit
+    onReply: (Comment) -> Unit,
+    onLike: (Int) -> Unit
 ) {
     if (commentLazyPagingItems.loadState.refresh is LoadState.Loading && commentLazyPagingItems.itemCount == 0) {
         Column(modifier = modifier) {
@@ -284,13 +381,18 @@ private fun CommentList(
         columns = GridCells.Fixed(1),
         enablePullRefresh = false
     ) {
-        CommentWithAction(it) {
-            if (isLogin) {
-                onReply(it)
-            } else {
-                onLogin()
-            }
-        }
+        CommentWithAction(
+            comment = it,
+            isLiked = it.id in likedCommentIds,
+            onReply = { targetComment ->
+                if (isLogin) {
+                    onReply(targetComment)
+                } else {
+                    onLogin()
+                }
+            },
+            onLike = { onLike(it.id) }
+        )
     }
 }
 

@@ -257,8 +257,10 @@ fun SignInScreen(
                             Text("连续签到三天额外获得${signDataState.data?.threeDaysCoin ?: 0}金币，${signDataState.data?.threeDaysExp ?: 0}经验")
                             Text("连续签到七天额外获得${signDataState.data?.sevenDaysCoin ?: 0}金币，${signDataState.data?.sevenDaysExp ?: 0}经验")
                         }
+                        val todayDayOfMonth = today.dayOfMonth
+                        val isTodaySigned = signDataState.data?.dateMap?.get(todayDayOfMonth)?.isSign == true
                         Button(
-                            enabled = !signDataState.isLoading,
+                            enabled = !signDataState.isLoading && !isTodaySigned,
                             modifier = Modifier
                                 .padding(horizontal = 10.dp)
                                 .height(46.dp)
@@ -271,18 +273,20 @@ fun SignInScreen(
                                 }
                             }
                         ) {
-                            if (signInState.isLoading) {
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    CircularProgressIndicator(
-                                        color = ButtonDefaults.buttonColors().disabledContainerColor,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    Text("签到中")
+                            when {
+                                signInState.isLoading -> {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        CircularProgressIndicator(
+                                            color = ButtonDefaults.buttonColors().disabledContainerColor,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Text("签到中")
+                                    }
                                 }
-                            } else {
-                                Text("签到")
+                                isTodaySigned -> Text("今日已签到")
+                                else -> Text("签到")
                             }
                         }
                     }

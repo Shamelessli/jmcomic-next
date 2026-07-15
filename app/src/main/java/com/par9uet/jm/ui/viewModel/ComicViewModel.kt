@@ -87,8 +87,7 @@ class ComicViewModel(
             pagingSourceFactory = {
                 SearchComicPagingSource(
                     comicRepository,
-                    filter,
-                    blockedTagList
+                    filter.copy(excludedTags = (filter.excludedTags + blockedTagList).distinct()),
                 ) { id ->
                     _searchComicIdState.update {
                         id
@@ -114,6 +113,20 @@ class ComicViewModel(
                 searchContent = searchContent
             )
         }
+    }
+
+    fun changeSearchComicContent(searchContent: String, excludedTags: List<String>) {
+        _searchComicIdState.update { null }
+        _searchComicFilterState.update {
+            it.copy(
+                searchContent = searchContent,
+                excludedTags = excludedTags
+            )
+        }
+    }
+
+    fun consumeSearchComicId() {
+        _searchComicIdState.update { null }
     }
 
     private val _weekDataState = MutableStateFlow(CommonUIState<WeekData>())

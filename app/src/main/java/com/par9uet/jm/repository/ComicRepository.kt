@@ -45,8 +45,20 @@ interface ComicRepository {
         commentId: Int?
     ): NetWorkResult<CommentComicResponse>
 
+    suspend fun likeComment(commentId: Int): NetWorkResult<CommentComicResponse>
+
     suspend fun createFavoriteFolder(name: String): NetWorkResult<Unit>
     suspend fun deleteFavoriteFolder(folderId: String): NetWorkResult<Unit>
     suspend fun renameFavoriteFolder(folderId: String, newName: String): NetWorkResult<Unit>
     suspend fun moveComicToFolder(comicId: Int, folderId: String): NetWorkResult<Unit>
+
+    /**
+     * 通过 JMComic 内置 API 按标签名搜索，返回该标签下的漫画 ID 集合。
+     * 用于标签排除：获取所有排除标签下的漫画 ID 并集，从搜索结果中过滤掉。
+     *
+     * @param tagName 标签名（如 "催眠"）
+     * @param maxPages 最多扫描的页数（每页约 20 条），默认 5 页
+     * @return 该标签下的漫画 ID 集合；标签不存在或网络错误时返回空集合
+     */
+    suspend fun getComicIdsByTag(tagName: String, maxPages: Int = 5): Set<Int>
 }

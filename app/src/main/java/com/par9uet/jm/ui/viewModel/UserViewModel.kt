@@ -6,13 +6,16 @@ import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.cachedIn
 import com.par9uet.jm.data.models.CollectComicOrderFilter
+import com.par9uet.jm.data.models.Comic
 import com.par9uet.jm.data.models.SignInData
+import com.par9uet.jm.data.models.TagFilterLogic
 import com.par9uet.jm.repository.ComicRepository
 import com.par9uet.jm.repository.UserRepository
 import com.par9uet.jm.retrofit.model.LoginResponse
 import com.par9uet.jm.retrofit.model.NetWorkResult
 import com.par9uet.jm.retrofit.model.SignInDataResponse
 import com.par9uet.jm.retrofit.model.SignInResponse
+import com.par9uet.jm.store.DownloadManager
 import com.par9uet.jm.store.LocalSettingManager
 import com.par9uet.jm.store.ToastManager
 import com.par9uet.jm.store.UserManager
@@ -21,6 +24,8 @@ import com.par9uet.jm.ui.pagingSource.CollectComicPagingSource
 import com.par9uet.jm.ui.pagingSource.HistoryComicPagingSource
 import com.par9uet.jm.ui.pagingSource.HistoryCommentPagingSource
 import com.par9uet.jm.utils.filterBlockedTags
+import com.par9uet.jm.utils.log
+import com.par9uet.jm.utils.logError
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -31,7 +36,19 @@ import kotlinx.coroutines.launch
 
 data class CollectComicLocalFilter(
     val searchText: String = "",
-    val selectedTags: Set<String> = emptySet()
+    val selectedTags: Set<String> = emptySet(),
+    val selectedAuthors: Set<String> = emptySet(),
+    val tagLogic: TagFilterLogic = TagFilterLogic.AND
+)
+
+data class CollectEditState(
+    val editing: Boolean = false,
+    val selectedComicIds: Set<Int> = emptySet()
+)
+
+data class HistoryEditState(
+    val editing: Boolean = false,
+    val selectedComicIds: Set<Int> = emptySet()
 )
 
 private data class CollectPagerKey(
@@ -47,6 +64,7 @@ class UserViewModel(
     private val toastManager: ToastManager,
     private val localSettingManager: LocalSettingManager,
     private val comicRepository: ComicRepository,
+    private val downloadManager: DownloadManager,
 ) : ViewModel() {
     private val _loginState = MutableStateFlow(CommonUIState(data = null))
     val loginState = _loginState.asStateFlow()
@@ -97,10 +115,14 @@ class UserViewModel(
     val collectComicFilter = _collectComicFilter.asStateFlow()
     private val _collectTagCounts = MutableStateFlow<Map<String, Int>>(emptyMap())
     val collectTagCounts = _collectTagCounts.asStateFlow()
+    private val _collectAuthorCounts = MutableStateFlow<Map<String, Int>>(emptyMap())
+    val collectAuthorCounts = _collectAuthorCounts.asStateFlow()
     private val _selectedFolderId = MutableStateFlow(0)
     val selectedFolderId = _selectedFolderId.asStateFlow()
     private val _folderList = MutableStateFlow<Map<String, String>>(emptyMap())
     val folderList = _folderList.asStateFlow()
+    private val _collectEditState = MutableStateFlow(CollectEditState())
+    val collectEditState = _collectEditState.asStateFlow()
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val collectComicPager = combine(
@@ -120,7 +142,9 @@ class UserViewModel(
                     key.blockedTagList,
                     key.filter.searchText,
                     key.filter.selectedTags,
-                    key.folderId
+                    key.filter.selectedAuthors,
+                    key.folderId,
+                    key.filter.tagLogic
                 )
             }
         ).flow
@@ -141,8 +165,82 @@ class UserViewModel(
         _collectComicFilter.update { it.copy(selectedTags = tags) }
     }
 
+    fun updateCollectTagLogic(logic: TagFilterLogic) {
+        _collectComicFilter.update { it.copy(tagLogic = logic) }
+    }
+
+    fun updateCollectSelectedAuthors(authors: Set<String>) {
+        _collectComicFilter.update { it.copy(selectedAuthors = authors) }
+    }
+
     fun changeFolder(folderId: Int) {
         _selectedFolderId.update { folderId }
+        refreshCollectTagCounts()
+    }
+
+    fun enterCollectEdit(comicId: Int) {
+        _collectEditState.update {
+            it.copy(editing = true, selectedComicIds = it.selectedComicIds + comicId)
+        }
+    }
+
+    fun toggleCollectSelected(comicId: Int) {
+        _collectEditState.update {
+            val selected = if (comicId in it.selectedComicIds) {
+                it.selectedComicIds - comicId
+            } else {
+                it.selectedComicIds + comicId
+            }
+            it.copy(editing = selected.isNotEmpty(), selectedComicIds = selected)
+        }
+    }
+
+    fun clearCollectSelection() {
+        _collectEditState.update { CollectEditState() }
+    }
+
+    fun deleteCollectedComics(comics: List<Comic>) {
+        if (comics.isEmpty()) return
+        viewModelScope.launch {
+            var success = 0
+            var fail = 0
+            comics.forEach { comic ->
+                when (comicRepository.unCollectComic(comic.id)) {
+                    is NetWorkResult.Error -> fail++
+                    is NetWorkResult.Success -> success++
+                }
+            }
+            toastManager.showAsync(
+                if (fail == 0) "已取消收藏 $success 部漫画"
+                else "成功 $success 部，失败 $fail 部"
+            )
+            clearCollectSelection()
+        }
+    }
+
+    fun cacheCollectedComics(comics: List<Comic>) {
+        if (comics.isEmpty()) return
+        downloadManager.downloadComics(comics)
+        clearCollectSelection()
+    }
+
+    fun moveCollectedToFolder(comics: List<Comic>, folderId: String) {
+        if (comics.isEmpty()) return
+        viewModelScope.launch {
+            var success = 0
+            var fail = 0
+            comics.forEach { comic ->
+                when (comicRepository.moveComicToFolder(comic.id, folderId)) {
+                    is NetWorkResult.Error -> fail++
+                    is NetWorkResult.Success -> success++
+                }
+            }
+            toastManager.showAsync(
+                if (fail == 0) "已移动 $success 部漫画"
+                else "成功 $success 部，失败 $fail 部"
+            )
+            clearCollectSelection()
+        }
     }
 
     fun refreshFolderList() {
@@ -202,7 +300,8 @@ class UserViewModel(
             val blockedTagList = localSettingManager.localSettingState.value.blockedTagList
             val order = _collectComicOrder.value
             val folderId = _selectedFolderId.value
-            val counts = mutableMapOf<String, Int>()
+            val tagCounts = mutableMapOf<String, Int>()
+            val authorCounts = mutableMapOf<String, Int>()
             var page = 1
             var loaded = 0
             var total = Int.MAX_VALUE
@@ -216,7 +315,10 @@ class UserViewModel(
                     is NetWorkResult.Success -> {
                         val comics = data.data.toComicList().filterBlockedTags(blockedTagList)
                         comics.flatMap { it.tagList }.forEach { tag ->
-                            counts[tag] = (counts[tag] ?: 0) + 1
+                            tagCounts[tag] = (tagCounts[tag] ?: 0) + 1
+                        }
+                        comics.flatMap { it.authorList }.forEach { author ->
+                            authorCounts[author] = (authorCounts[author] ?: 0) + 1
                         }
                         total = data.data.total
                         loaded += data.data.list.size
@@ -225,12 +327,19 @@ class UserViewModel(
                     }
                 }
             }
-            _collectTagCounts.value = counts.toSortedMap()
+            _collectTagCounts.value = tagCounts.toSortedMap()
+            _collectAuthorCounts.value = authorCounts.toSortedMap()
         }
     }
 
+    private val _historyRefreshVersion = MutableStateFlow(0)
+
     @OptIn(ExperimentalCoroutinesApi::class)
-    val historyComicPager = localSettingManager.localSettingState.flatMapLatest { localSetting ->
+    val historyComicPager = combine(
+        localSettingManager.localSettingState,
+        _historyRefreshVersion
+    ) { localSetting, _ -> localSetting }
+        .flatMapLatest { localSetting ->
         Pager(
             config = PagingConfig(pageSize = 20, prefetchDistance = 6, initialLoadSize = 20),
             pagingSourceFactory = {
@@ -241,6 +350,71 @@ class UserViewModel(
             }
         ).flow
     }.cachedIn(viewModelScope)
+
+    private val _historyEditState = MutableStateFlow(HistoryEditState())
+    val historyEditState = _historyEditState.asStateFlow()
+
+    fun enterHistoryEdit(comicId: Int) {
+        _historyEditState.update {
+            it.copy(editing = true, selectedComicIds = it.selectedComicIds + comicId)
+        }
+    }
+
+    fun toggleHistorySelected(comicId: Int) {
+        _historyEditState.update {
+            val selected = if (comicId in it.selectedComicIds) {
+                it.selectedComicIds - comicId
+            } else {
+                it.selectedComicIds + comicId
+            }
+            it.copy(editing = selected.isNotEmpty(), selectedComicIds = selected)
+        }
+    }
+
+    fun clearHistorySelection() {
+        _historyEditState.update { HistoryEditState() }
+    }
+
+    fun deleteHistoryComics(comics: List<Comic>) {
+        if (comics.isEmpty()) return
+        log("UserViewModel", "deleteHistoryComics: 开始删除 ${comics.size} 条历史记录, ids=${comics.map { it.id }}")
+        viewModelScope.launch {
+            var success = 0
+            var fail = 0
+            val errors = mutableListOf<String>()
+            comics.forEach { comic ->
+                log("UserViewModel", "deleteHistoryComics: 正在删除 comic.id=${comic.id}")
+                when (val result = userRepository.deleteHistoryComic(comic.id)) {
+                    is NetWorkResult.Error -> {
+                        logError(
+                            "UserViewModel",
+                            "deleteHistoryComics: 删除 comic.id=${comic.id} 失败: ${result.message}"
+                        )
+                        errors += result.message
+                        fail++
+                    }
+                    is NetWorkResult.Success -> success++
+                }
+            }
+            log("UserViewModel", "deleteHistoryComics: 完成, 成功=$success, 失败=$fail")
+            val message = when {
+                fail == 0 -> "已删除 $success 条历史记录"
+                success == 0 -> errors.firstOrNull() ?: "删除失败"
+                else -> "成功 $success 条，失败 $fail 条：${errors.firstOrNull().orEmpty()}"
+            }
+            toastManager.showAsync(message)
+            if (success > 0) {
+                _historyRefreshVersion.update { it + 1 }
+            }
+            clearHistorySelection()
+        }
+    }
+
+    fun cacheHistoryComics(comics: List<Comic>) {
+        if (comics.isEmpty()) return
+        downloadManager.downloadComics(comics)
+        clearHistorySelection()
+    }
 
     val historyCommentPager = Pager(
         config = PagingConfig(pageSize = 20, prefetchDistance = 6, initialLoadSize = 20),

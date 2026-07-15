@@ -26,12 +26,14 @@ class ResponseConverterFactory(
             val body = responseBody.string()
             val json = gson.fromJson(body, JsonObject::class.java)
             val code = json["code"].asInt
-            if (code == 200 && json["data"] != null) {
-                val encryptedData = json["data"].asString
-                val decryptedData = decryptData(encryptedData)
-                val data = gson.fromJson(decryptedData, JsonElement::class.java)
-                json.add("data", data);
-//                Log.d("ResponseBodyConverter", "解密后数据：$data")
+            if (code == 200) {
+                // code=200 时，即使 data 为 null 也视为成功（如点赞接口不返回 data）
+                if (json["data"] != null && !json["data"].isJsonNull) {
+                    val encryptedData = json["data"].asString
+                    val decryptedData = decryptData(encryptedData)
+                    val data = gson.fromJson(decryptedData, JsonElement::class.java)
+                    json.add("data", data)
+                }
                 val result = elementAdapter.fromJsonTree(json)
                 return@Converter result
             }

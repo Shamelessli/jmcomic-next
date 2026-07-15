@@ -4,6 +4,8 @@ import com.par9uet.jm.data.models.CollectComicOrderFilter
 import com.par9uet.jm.data.models.COMIC_API_SOURCE_BUILTIN
 import com.par9uet.jm.repository.BaseRepository
 import com.par9uet.jm.repository.UserRepository
+import com.par9uet.jm.utils.log
+import com.par9uet.jm.utils.logError
 import com.par9uet.jm.retrofit.model.LoginResponse
 import com.par9uet.jm.retrofit.model.NetWorkResult
 import com.par9uet.jm.retrofit.model.SignInDataResponse
@@ -28,6 +30,8 @@ import io.github.jukomu.jmcomic.core.client.impl.JmApiClient
 import io.github.jukomu.jmcomic.core.config.JmConfiguration
 import io.github.jukomu.jmcomic.core.net.OkHttpBuilder
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import okhttp3.Cookie
 import java.time.Duration
@@ -66,19 +70,32 @@ class UserRepositoryImpl(
         if (useEmbeddedApi()) {
             return withContext(Dispatchers.IO) {
                 try {
-                    NetWorkResult.Success(withEmbeddedClient { client ->
-                        val query = FavoriteQuery.Builder()
-                            .folderId(folderId)
-                            .page(page)
-                            .build()
-                        val favPage = client.getFavorites(query)
+                    val client = embeddedClientManager.getClient()
+                    val query = FavoriteQuery.Builder()
+                        .folderId(folderId)
+                        .page(page)
+                        .build()
+                    val favPage = client.getFavorites(query)
+                    val metas = favPage.content().orEmpty()
+                    // 为每个收藏项获取完整 Album 以补全所有 tags（并发请求）
+                    val listWithFullTags = coroutineScope {
+                        metas.map { meta ->
+                            async {
+                                val fullTags = runCatching {
+                                    client.getAlbum(meta.id().orEmpty()).tags().orEmpty()
+                                }.getOrDefault(meta.tags().orEmpty())
+                                meta.toListItem(fullTags)
+                            }
+                        }.map { it.await() }
+                    }
+                    NetWorkResult.Success(
                         UserCollectComicListResponse(
                             count = favPage.totalItems(),
                             folder_list = favPage.folderList(),
-                            list = favPage.content().orEmpty().map { it.toListItem() },
+                            list = listWithFullTags,
                             total = favPage.totalPages()
                         )
-                    })
+                    )
                 } catch (e: Exception) {
                     NetWorkResult.Error("内置API获取收藏列表失败：${e.message ?: "未知错误"}")
                 }
@@ -107,6 +124,20 @@ class UserRepositoryImpl(
         }
         return safeApiCall {
             service.getHistoryComicList(page)
+        }
+    }
+
+    override suspend fun deleteHistoryComic(id: Int): NetWorkResult<Unit> {
+        return withContext(Dispatchers.IO) {
+            try {
+                withEmbeddedClient { client ->
+                    client.deleteWatchHistory(id.toString())
+                }
+                NetWorkResult.Success(Unit)
+            } catch (e: Exception) {
+                logError("UserRepositoryImpl", "删除历史记录 id=$id 失败: ${e.message}")
+                NetWorkResult.Error("删除历史记录失败：${e.message ?: "未知错误"}")
+            }
         }
     }
 
@@ -202,7 +233,7 @@ class UserRepositoryImpl(
         )
     }
 
-    private fun JmAlbumMeta.toListItem(): UserCollectComicListResponse.ListItem {
+    private fun JmAlbumMeta.toListItem(fullTags: List<String> = tags().orEmpty()): UserCollectComicListResponse.ListItem {
         return UserCollectComicListResponse.ListItem(
             id = id().orEmpty(),
             author = authors().orEmpty().firstOrNull().orEmpty(),
@@ -210,7 +241,8 @@ class UserRepositoryImpl(
             name = title().orEmpty(),
             image = image().orEmpty(),
             category = category().toCollectCategory(),
-            category_sub = subCategory().toCollectCategory()
+            category_sub = subCategory().toCollectCategory(),
+            tags = if (fullTags.isEmpty()) null else fullTags
         )
     }
 

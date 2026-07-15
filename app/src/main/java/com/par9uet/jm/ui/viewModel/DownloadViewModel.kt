@@ -7,6 +7,7 @@ import androidx.paging.PagingConfig
 import androidx.paging.cachedIn
 import com.par9uet.jm.database.dao.DownloadComicDao
 import com.par9uet.jm.database.model.DownloadComic
+import com.par9uet.jm.store.DownloadManager
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -41,7 +42,8 @@ data class DownloadComicGroup(
 )
 
 class DownloadViewModel(
-    private val downloadComicDao: DownloadComicDao
+    private val downloadComicDao: DownloadComicDao,
+    private val downloadManager: DownloadManager
 ) : ViewModel() {
     private val _downloadFilterState = MutableStateFlow(DownloadFilter("downloading"))
     val downloadFilterState = _downloadFilterState.asStateFlow()
@@ -144,7 +146,10 @@ class DownloadViewModel(
     }
 
     fun startSelected() {
-        updateSelectedStatus("pending")
+        val ids = _editState.value.selectedIds.toList()
+        if (ids.isEmpty()) return
+        clearSelection()
+        downloadManager.resumeDownloads(ids)
     }
 
     private fun updateSelectedStatus(status: String) {
@@ -154,6 +159,28 @@ class DownloadViewModel(
             downloadComicDao.updateStatusByIds(ids, status)
             clearSelection()
         }
+    }
+
+    fun redownloadSelected() {
+        val ids = _editState.value.selectedIds.toList()
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            val groupIds = mutableSetOf<Int>()
+            ids.forEach { id ->
+                val item = downloadComicDao.getById(id)
+                if (item != null) {
+                    groupIds.add(if (item.groupId != 0) item.groupId else item.id)
+                }
+            }
+            groupIds.forEach { groupId ->
+                downloadManager.redownloadGroup(groupId)
+            }
+            clearSelection()
+        }
+    }
+
+    fun redownloadOne(groupId: Int) {
+        downloadManager.redownloadGroup(groupId)
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)

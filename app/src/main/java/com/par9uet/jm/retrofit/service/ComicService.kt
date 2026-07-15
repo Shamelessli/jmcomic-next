@@ -10,6 +10,8 @@ import com.par9uet.jm.retrofit.model.LikeComicResponse
 import com.par9uet.jm.retrofit.model.ResponseWrapper
 import com.par9uet.jm.retrofit.model.WeekRecommendComicResponse
 import com.par9uet.jm.retrofit.model.WeekResponse
+import retrofit2.http.Field
+import retrofit2.http.FormUrlEncoded
 import retrofit2.http.GET
 import retrofit2.http.Multipart
 import retrofit2.http.POST
@@ -74,11 +76,17 @@ interface ComicService {
     ): ResponseWrapper<CommentListResponse>
 
     @POST("comment")
-    @Multipart
+    @FormUrlEncoded
     suspend fun comment(
-        @Part("comment") content: String,
-        @Part("aid") id: Int,
-        @Part("status") status: String, // TODO 是否剧透
-        @Part("comment_id") commentId: Int? = null,
+        @Field("comment") content: String,
+        @Field("aid") id: Int,
+        @Field("comment_id") commentId: Int = 0,
+    ): ResponseWrapper<CommentComicResponse>
+
+    @POST("comment_vote")
+    @FormUrlEncoded
+    suspend fun likeComment(
+        @Field("comment_id") commentId: Int,
+        @Field("vote_type") voteType: String = "up",
     ): ResponseWrapper<CommentComicResponse>
 }

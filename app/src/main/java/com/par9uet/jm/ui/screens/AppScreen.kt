@@ -3,8 +3,10 @@ package com.par9uet.jm.ui.screens
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -16,6 +18,8 @@ import com.par9uet.jm.ui.screens.downloadScreen.DownloadComicDetailScreen
 import com.par9uet.jm.ui.screens.readScreen.ComicReadScreen
 import com.par9uet.jm.ui.screens.tabScreen.TabScreen
 import com.par9uet.jm.ui.viewModel.ComicViewModel
+import com.par9uet.jm.utils.EXTRA_NAVIGATE_ROUTE
+import com.par9uet.jm.utils.deserializeExcludedTags
 import org.koin.compose.viewmodel.koinActivityViewModel
 
 @Composable
@@ -24,6 +28,15 @@ fun AppScreen(
     externalNavController: NavHostController? = null,
 ) {
     val mainNavController = externalNavController ?: rememberNavController()
+    val context = LocalContext.current
+    // 处理从通知点击进入时的目标路由（例如更新下载完成通知）
+    LaunchedEffect(Unit) {
+        val activity = context.findActivity()
+        activity?.intent?.getStringExtra(EXTRA_NAVIGATE_ROUTE)?.let { route ->
+            activity.intent.removeExtra(EXTRA_NAVIGATE_ROUTE)
+            runCatching { mainNavController.navigate(route) }
+        }
+    }
     CompositionLocalProvider(
         LocalMainNavController provides mainNavController,
     ) {
@@ -58,6 +71,8 @@ fun AppScreen(
             composable(route = "userHistoryComment") { UserHistoryCommentScreen() }
             composable(route = "appLocalSetting") { LocalSettingScreen() }
             composable(route = "appLockSetting") { AppLockSettingScreen() }
+            composable(route = "colorPalette") { ColorPaletteScreen() }
+            composable(route = "blockedTags") { BlockedTagsScreen() }
             composable(route = "about") { AboutScreen() }
             composable(route = "checkUpdate") { CheckUpdateScreen() }
             composable(route = "logViewer") { LogViewerScreen() }
@@ -98,19 +113,47 @@ fun AppScreen(
                 val id = backStackEntry.arguments?.getInt("id") ?: -1
                 ComicReadScreen(comicId = id)
             }
-            composable(route = "comicSearch",) { ComicSearchScreen() }
-            composable(route = "extractCode") { ExtractCodeScreen() }
             composable(
-                route = "comicSearchResult/{searchContent}",
+                route = "comicSearch?searchContent={searchContent}&excludedTags={excludedTags}",
                 arguments = listOf(
-                    navArgument(name = "searchContent") { type = NavType.StringType }
+                    navArgument(name = "searchContent") {
+                        type = NavType.StringType
+                        defaultValue = ""
+                    },
+                    navArgument(name = "excludedTags") {
+                        type = NavType.StringType
+                        defaultValue = ""
+                    }
                 ),
             ) { backStackEntry ->
                 val searchContent = backStackEntry.arguments?.getString("searchContent") ?: ""
-                comicViewModel.changeSearchComicContent(searchContent)
+                val excludedTags = deserializeExcludedTags(
+                    backStackEntry.arguments?.getString("excludedTags")
+                )
+                ComicSearchScreen(
+                    initialSearchContent = searchContent,
+                    initialExcludedTags = excludedTags
+                )
+            }
+            composable(route = "extractCode") { ExtractCodeScreen() }
+            composable(
+                route = "comicSearchResult/{searchContent}?excludedTags={excludedTags}",
+                arguments = listOf(
+                    navArgument(name = "searchContent") { type = NavType.StringType },
+                    navArgument(name = "excludedTags") {
+                        type = NavType.StringType
+                        defaultValue = ""
+                    }
+                ),
+            ) { backStackEntry ->
+                val searchContent = backStackEntry.arguments?.getString("searchContent") ?: ""
+                val excludedTagsValue = backStackEntry.arguments?.getString("excludedTags") ?: ""
+                val excludedTags = deserializeExcludedTags(excludedTagsValue)
+                LaunchedEffect(searchContent, excludedTagsValue) {
+                    comicViewModel.changeSearchComicContent(searchContent, excludedTags)
+                }
                 ComicSearchResultScreen()
             }
-            composable(route = "comicSearch") { ComicSearchScreen() }
             composable(route = "comicRecommend") { ComicWeekRecommendScreen() }
             composable(
                 route = "comment/{comicId}",
@@ -147,4 +190,12 @@ fun AppScreen(
 
 val LocalMainNavController = staticCompositionLocalOf<NavHostController> {
     error("none")
+}
+
+private tailrec fun android.content.Context.findActivity(): android.app.Activity? {
+    return when (this) {
+        is android.app.Activity -> this
+        is android.content.ContextWrapper -> baseContext.findActivity()
+        else -> null
+    }
 }

@@ -1,14 +1,17 @@
 package com.par9uet.jm.store
 
+import com.par9uet.jm.data.models.BlockedTagTemplate
 import com.par9uet.jm.data.models.LauncherDisguise
 import com.par9uet.jm.data.models.LocalSetting
 import com.par9uet.jm.storage.LocalSettingStorage
 import com.par9uet.jm.task.AppInitTask
 import com.par9uet.jm.task.AppTaskInfo
 import com.par9uet.jm.utils.LauncherDisguiseApplier
+import com.par9uet.jm.utils.flattenBlockedTagTemplates
 import com.par9uet.jm.utils.log
 import com.par9uet.jm.utils.normalizeBlockedTag
 import com.par9uet.jm.utils.normalizeBlockedTagList
+import com.par9uet.jm.utils.normalizeBlockedTagTemplates
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -31,6 +34,12 @@ class LocalSettingManager(
 
     fun updateClipboardAutoDetectEnabled(enabled: Boolean) =
         updateSetting { it.copy(clipboardAutoDetectEnabled = enabled) }
+
+    fun updateAutoSignInEnabled(enabled: Boolean) =
+        updateSetting { it.copy(autoSignInEnabled = enabled) }
+
+    fun updateRecommendSource(source: String) =
+        updateSetting { it.copy(recommendSource = source) }
 
     fun updateApi(api: String) = updateSetting { it.copy(api = api) }
 
@@ -99,6 +108,38 @@ class LocalSettingManager(
         }
     }
 
+    fun saveBlockedTagTemplate(index: Int?, name: String, tags: List<String>) {
+        val normalizedTags = normalizeBlockedTagList(tags)
+        if (normalizedTags.isEmpty()) return
+        val template = BlockedTagTemplate(
+            name = name.trim().ifBlank { "排除模板" },
+            tagList = normalizedTags
+        )
+        updateSetting { setting ->
+            val mutable = setting.blockedTagTemplateList.toMutableList()
+            if (index != null && index in mutable.indices) {
+                mutable[index] = template
+            } else {
+                mutable += template
+            }
+            setting.withBlockedTagTemplates(mutable)
+        }
+    }
+
+    fun removeBlockedTagTemplate(index: Int) =
+        updateSetting { setting ->
+            if (index !in setting.blockedTagTemplateList.indices) {
+                setting
+            } else {
+                setting.withBlockedTagTemplates(
+                    setting.blockedTagTemplateList.filterIndexed { i, _ -> i != index }
+                )
+            }
+        }
+
+    fun replaceBlockedTagTemplates(templates: List<BlockedTagTemplate>) =
+        updateSetting { it.withBlockedTagTemplates(templates) }
+
     fun updateAppLockEnabled(enabled: Boolean) =
         updateSetting { it.copy(appLockEnabled = enabled) }
 
@@ -114,12 +155,51 @@ class LocalSettingManager(
     fun updateAppLockUnlockMode(mode: String) =
         updateSetting { it.copy(appLockUnlockMode = mode) }
 
+    fun updateColorPalettePreset(preset: String) =
+        updateSetting { it.copy(colorPalettePreset = preset) }
+
+    fun updateCustomColor(primary: String?, secondary: String?, tertiary: String?, error: String?) =
+        updateSetting {
+            it.copy(
+                customColorPrimary = primary,
+                customColorSecondary = secondary,
+                customColorTertiary = tertiary,
+                customColorError = error,
+            )
+        }
+
     fun dismissNsfwWarning() =
         updateSetting { it.copy(nsfwWarningDismissed = true) }
+
+    fun updateHomeGridColumns(columns: Int) =
+        updateSetting { it.copy(homeGridColumns = columns.coerceIn(0, 6)) }
+
+    fun updateCollectGridColumns(columns: Int) =
+        updateSetting { it.copy(collectGridColumns = columns.coerceIn(0, 6)) }
+
+    fun updateDownloadGridColumns(columns: Int) =
+        updateSetting { it.copy(downloadGridColumns = columns.coerceIn(0, 6)) }
+
+    fun updateHistoryGridColumns(columns: Int) =
+        updateSetting { it.copy(historyGridColumns = columns.coerceIn(0, 6)) }
+
+    fun updateReadMemoryOptEnabled(enabled: Boolean) =
+        updateSetting { it.copy(readMemoryOptEnabled = enabled) }
+
+    fun updateReadDecodeConcurrency(concurrency: Int) =
+        updateSetting { it.copy(readDecodeConcurrency = concurrency.coerceIn(1, 4)) }
 
     private fun updateSetting(update: (LocalSetting) -> LocalSetting) {
         _localSettingState.update(update)
         localSettingStorage.set(_localSettingState.value)
+    }
+
+    private fun LocalSetting.withBlockedTagTemplates(templates: List<BlockedTagTemplate>): LocalSetting {
+        val normalizedTemplates = normalizeBlockedTagTemplates(templates)
+        return copy(
+            blockedTagTemplateList = normalizedTemplates,
+            blockedTagList = flattenBlockedTagTemplates(normalizedTemplates)
+        )
     }
 
     private var appTaskInfo = AppTaskInfo(

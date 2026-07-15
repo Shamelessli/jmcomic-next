@@ -204,7 +204,7 @@ fun HomeScreen(
                             }
                         }
                     },
-                columns = adaptiveComicGridCells(),
+                columns = adaptiveComicGridCells(localSetting.homeGridColumns),
                 verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Top),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 16.dp)

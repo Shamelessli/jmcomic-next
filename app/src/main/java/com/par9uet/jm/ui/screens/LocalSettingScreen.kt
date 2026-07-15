@@ -6,8 +6,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -15,28 +17,41 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.MenuBook
 import androidx.compose.material.icons.rounded.Api
+import androidx.compose.material.icons.rounded.Block
+import androidx.compose.material.icons.rounded.Bookmarks
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.DarkMode
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.GridView
+import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Psychology
 import androidx.compose.material.icons.rounded.Recommend
+import androidx.compose.material.icons.rounded.Source
 import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.CleaningServices
+import androidx.compose.material.icons.rounded.EventAvailable
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -69,6 +84,9 @@ private sealed class SettingType {
     object ReadMode : SettingType()
     object ReadTapMode : SettingType()
     object NotificationManagement : SettingType()
+    object RecommendSource : SettingType()
+    object AllGridColumns : SettingType()
+    object ReadDecodeConcurrency : SettingType()
 }
 
 private const val NOTIFICATION_ON_WITH_NAME = "on_with_name"
@@ -85,6 +103,9 @@ private val comicApiSourceTextMap = mapOf(
     COMIC_API_SOURCE_BUILTIN to "\u5185\u7f6e API",
     COMIC_API_SOURCE_NETWORK to "\u7f51\u7edc API",
 )
+
+private fun gridColumnsText(columns: Int): String =
+    if (columns == 0) "\u81ea\u9002\u5e94" else "$columns \u5217"
 
 @Composable
 fun LocalSettingScreen(
@@ -130,6 +151,17 @@ fun LocalSettingScreen(
                     SettingsRow(Icons.Rounded.DarkMode, "\u4e3b\u9898", themeTextMap[localSetting.theme].orEmpty()) {
                         openSetting(SettingType.Theme)
                     }
+                    SettingsRow(
+                        icon = Icons.Rounded.Palette,
+                        title = "\u8c03\u8272\u677f",
+                        value = when (localSetting.colorPalettePreset) {
+                            "custom" -> "\u81ea\u5b9a\u4e49"
+                            "monet" -> "\u83ab\u5948\u53d6\u8272"
+                            else -> "\u9884\u8bbe\u65b9\u6848"
+                        }
+                    ) {
+                        mainNavController.navigate("colorPalette")
+                    }
                     SettingsRow(Icons.Rounded.Image, "\u56fe\u6807\u4f2a\u88c5", LauncherDisguise.fromId(localSetting.launcherDisguise).label) {
                         openSetting(SettingType.LauncherDisguise)
                     }
@@ -145,6 +177,13 @@ fun LocalSettingScreen(
                         value = localSetting.clipboardAutoDetectEnabled,
                         onCheckedChange = localSettingManager::updateClipboardAutoDetectEnabled
                     )
+                    SettingsRow(
+                        Icons.Rounded.GridView,
+                        "\u7f51\u683c\u5217\u6570",
+                        "\u9996\u9875 ${gridColumnsText(localSetting.homeGridColumns)} \u00b7 \u6536\u85cf ${gridColumnsText(localSetting.collectGridColumns)} \u00b7 \u7f13\u5b58 ${gridColumnsText(localSetting.downloadGridColumns)} \u00b7 \u5386\u53f2 ${gridColumnsText(localSetting.historyGridColumns)}"
+                    ) {
+                        openSetting(SettingType.AllGridColumns)
+                    }
                 }
             }
             item {
@@ -188,6 +227,13 @@ fun LocalSettingScreen(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            SettingsRow(
+                                icon = Icons.Rounded.Source,
+                                title = "\u63a8\u8350\u6e90",
+                                value = if (localSetting.recommendSource == "builtin") "\u5185\u7f6e API \u63a8\u8350" else "\u7f51\u7edc API \u63a8\u8350"
+                            ) {
+                                openSetting(SettingType.RecommendSource)
+                            }
                         }
                     }
                 }
@@ -207,6 +253,27 @@ fun LocalSettingScreen(
                     ) {
                         openSetting(SettingType.ReadTapMode)
                     }
+                    SettingsSwitchRow(
+                        icon = Icons.Rounded.Memory,
+                        title = "\u56fe\u7247\u5185\u5b58\u4f18\u5316",
+                        value = localSetting.readMemoryOptEnabled,
+                        onCheckedChange = { localSettingManager.updateReadMemoryOptEnabled(it) }
+                    )
+                    if (localSetting.readMemoryOptEnabled) {
+                        Text(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                            text = "\u5f00\u542f\u540e\u9650\u5236\u5e76\u53d1\u89e3\u7801\u6570\u5e76\u964d\u4f4e\u91c7\u6837\u7387\uff0c\u7f13\u89e3\u4f4e\u7aef\u8bbe\u5907 OOM\uff1b\u63a8\u8350\u503c 2",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        SettingsRow(
+                            icon = Icons.Rounded.Memory,
+                            title = "\u5e76\u53d1\u89e3\u7801\u6570",
+                            value = "\u63a8\u8350 ${localSetting.readDecodeConcurrency}"
+                        ) {
+                            openSetting(SettingType.ReadDecodeConcurrency)
+                        }
+                    }
                 }
             }
             item {
@@ -218,6 +285,12 @@ fun LocalSettingScreen(
             }
             item {
                 SettingsSection(title = "\u5176\u4ed6") {
+                    SettingsSwitchRow(
+                        icon = Icons.Rounded.EventAvailable,
+                        title = "\u81ea\u52a8\u7b7e\u5230",
+                        value = localSetting.autoSignInEnabled,
+                        onCheckedChange = { localSettingManager.updateAutoSignInEnabled(it) }
+                    )
                     SettingsRow(Icons.Rounded.BugReport, "\u67e5\u770b\u65e5\u5fd7", "\u8c03\u8bd5\u548c\u9519\u8bef\u4fe1\u606f") {
                         mainNavController.navigate("logViewer")
                     }
@@ -252,8 +325,32 @@ private fun SettingSelectDialogContent(
     localSettingManager: LocalSettingManager,
     onDismiss: () -> Unit
 ) {
+    // 网格列数使用滑块设置，不走选项列表
+    if (settingType is SettingType.AllGridColumns) {
+        AllGridColumnSliderDialog(
+            homeColumns = localSetting.homeGridColumns,
+            collectColumns = localSetting.collectGridColumns,
+            downloadColumns = localSetting.downloadGridColumns,
+            historyColumns = localSetting.historyGridColumns,
+            onConfirm = { home, collect, download, history ->
+                localSettingManager.updateHomeGridColumns(home)
+                localSettingManager.updateCollectGridColumns(collect)
+                localSettingManager.updateDownloadGridColumns(download)
+                localSettingManager.updateHistoryGridColumns(history)
+                onDismiss()
+            },
+            onDismiss = onDismiss
+        )
+        return
+    }
     val apiSelectOptionList by remember(localSetting.apiList) {
         derivedStateOf { localSetting.apiList.map { SelectOption(it.removePrefix("https://"), it) } }
+    }
+    val recommendSourceOptionList = remember {
+        listOf(
+            SelectOption("\u5185\u7f6e API \u63a8\u8350", "builtin"),
+            SelectOption("\u7f51\u7edc API \u63a8\u8350", "network")
+        )
     }
     val comicApiSourceOptionList by remember(localSetting.comicApiSourceList) {
         derivedStateOf {
@@ -310,6 +407,16 @@ private fun SettingSelectDialogContent(
             )
         }
     }
+    val readDecodeConcurrencyOptionList by remember {
+        derivedStateOf {
+            listOf(
+                SelectOption("1", "1"),
+                SelectOption("2\uff08\u63a8\u8350\uff09", "2"),
+                SelectOption("3", "3"),
+                SelectOption("4", "4")
+            )
+        }
+    }
     SelectDialog(
         title = settingTitle(settingType),
         value = settingValue(settingType, localSetting),
@@ -323,6 +430,8 @@ private fun SettingSelectDialogContent(
             is SettingType.ReadMode -> readModeOptionList
             is SettingType.ReadTapMode -> readTapModeOptionList
             is SettingType.NotificationManagement -> notificationOptionList
+            is SettingType.RecommendSource -> recommendSourceOptionList
+            is SettingType.ReadDecodeConcurrency -> readDecodeConcurrencyOptionList
         },
         onSelect = {
             when (settingType) {
@@ -340,10 +449,90 @@ private fun SettingSelectDialogContent(
                         showName = it == NOTIFICATION_ON_WITH_NAME
                     )
                 }
+                is SettingType.RecommendSource -> localSettingManager.updateRecommendSource(it)
+                is SettingType.ReadDecodeConcurrency -> localSettingManager.updateReadDecodeConcurrency(it.toIntOrNull() ?: 2)
             }
             onDismiss()
         },
         onDismissRequest = onDismiss
+    )
+}
+
+@Composable
+private fun AllGridColumnSliderDialog(
+    homeColumns: Int,
+    collectColumns: Int,
+    downloadColumns: Int,
+    historyColumns: Int,
+    onConfirm: (Int, Int, Int, Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var home by remember { mutableStateOf(homeColumns.toFloat()) }
+    var collect by remember { mutableStateOf(collectColumns.toFloat()) }
+    var download by remember { mutableStateOf(downloadColumns.toFloat()) }
+    var history by remember { mutableStateOf(historyColumns.toFloat()) }
+
+    @Composable
+    fun SliderRow(
+        icon: ImageVector,
+        label: String,
+        value: Float,
+        onChange: (Float) -> Unit,
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.primary)
+                    Text(label, style = MaterialTheme.typography.bodyLarge)
+                }
+                Text(
+                    text = if (value <= 0f) "自适应" else "${value.toInt()} 列",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            Slider(
+                value = value,
+                onValueChange = onChange,
+                valueRange = 0f..6f,
+                steps = 5,
+            )
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("网格列数") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "拖动滑块设置各页面每行显示的漫画数量，0 = 自适应",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                SliderRow(Icons.Rounded.Home, "首页", home) { home = it }
+                SliderRow(Icons.Rounded.Bookmarks, "收藏夹", collect) { collect = it }
+                SliderRow(Icons.Rounded.Download, "缓存", download) { download = it }
+                SliderRow(Icons.Rounded.History, "历史记录", history) { history = it }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(home.toInt(), collect.toInt(), download.toInt(), history.toInt()) }) {
+                Text("确定")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
     )
 }
 
@@ -496,6 +685,9 @@ private fun settingTitle(type: SettingType): String {
         is SettingType.ReadMode -> "\u9605\u8bfb\u6a21\u5f0f"
         is SettingType.ReadTapMode -> "\u70b9\u51fb\u7ffb\u56fe"
         is SettingType.NotificationManagement -> "\u901a\u77e5\u7ba1\u7406"
+        is SettingType.RecommendSource -> "\u63a8\u8350\u6e90"
+        is SettingType.AllGridColumns -> "\u7f51\u683c\u5217\u6570"
+        is SettingType.ReadDecodeConcurrency -> "\u5e76\u53d1\u89e3\u7801\u6570"
     }
 }
 
@@ -514,5 +706,8 @@ private fun settingValue(type: SettingType, localSetting: LocalSetting): String 
             localSetting.showComicCacheNotificationName -> NOTIFICATION_ON_WITH_NAME
             else -> NOTIFICATION_ON_WITHOUT_NAME
         }
+        is SettingType.RecommendSource -> localSetting.recommendSource
+        is SettingType.AllGridColumns -> ""
+        is SettingType.ReadDecodeConcurrency -> "${localSetting.readDecodeConcurrency}"
     }
 }

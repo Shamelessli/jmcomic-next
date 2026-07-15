@@ -4,11 +4,15 @@ import com.google.gson.JsonParser
 import com.google.gson.reflect.TypeToken
 import com.par9uet.jm.data.models.APP_LOCK_TYPE_PASSWORD
 import com.par9uet.jm.data.models.APP_LOCK_TYPE_PATTERN
+import com.par9uet.jm.data.models.BlockedTagTemplate
+import com.par9uet.jm.data.models.COLOR_PALETTE_PRESET_DEFAULT
 import com.par9uet.jm.data.models.COMIC_API_SOURCE_BUILTIN
 import com.par9uet.jm.data.models.COMIC_API_SOURCE_NETWORK
 import com.par9uet.jm.data.models.LauncherDisguise
 import com.par9uet.jm.data.models.LocalSetting
+import com.par9uet.jm.utils.flattenBlockedTagTemplates
 import com.par9uet.jm.utils.normalizeBlockedTagList
+import com.par9uet.jm.utils.normalizeBlockedTagTemplates
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -47,6 +51,19 @@ class LocalSettingStorage(
                 } else {
                     APP_LOCK_TYPE_PASSWORD
                 }
+                val legacyBlockedTags = normalizeBlockedTagList(
+                    runCatching { saved.blockedTagList }.getOrNull() ?: listOf()
+                )
+                val savedTemplates = normalizeBlockedTagTemplates(
+                    runCatching { saved.blockedTagTemplateList }.getOrNull() ?: listOf()
+                )
+                val migratedTemplates = if (savedJson.hasField("blockedTagTemplateList")) {
+                    savedTemplates
+                } else if (legacyBlockedTags.isNotEmpty()) {
+                    listOf(BlockedTagTemplate(name = "默认排除", tagList = legacyBlockedTags))
+                } else {
+                    listOf()
+                }
                 saved.copy(
                     comicApiSource = if (savedJson.hasField("comicApiSource")) {
                         listOf(COMIC_API_SOURCE_BUILTIN, COMIC_API_SOURCE_NETWORK)
@@ -70,9 +87,8 @@ class LocalSettingStorage(
                     } else {
                         LauncherDisguise.Default.id
                     },
-                    blockedTagList = normalizeBlockedTagList(
-                        runCatching { saved.blockedTagList }.getOrNull() ?: listOf()
-                    ),
+                    blockedTagList = flattenBlockedTagTemplates(migratedTemplates),
+                    blockedTagTemplateList = migratedTemplates,
                     appLockPassword = if (savedJson.hasField("appLockPassword")) {
                         saved.appLockPassword ?: ""
                     } else {
@@ -88,7 +104,32 @@ class LocalSettingStorage(
                     } else {
                         ""
                     },
-                    appLockUnlockMode = migratedUnlockMode
+                    appLockUnlockMode = migratedUnlockMode,
+                    colorPalettePreset = if (savedJson.hasField("colorPalettePreset")) {
+                        saved.colorPalettePreset
+                    } else {
+                        COLOR_PALETTE_PRESET_DEFAULT
+                    },
+                    customColorPrimary = if (savedJson.hasField("customColorPrimary")) {
+                        saved.customColorPrimary
+                    } else {
+                        null
+                    },
+                    customColorSecondary = if (savedJson.hasField("customColorSecondary")) {
+                        saved.customColorSecondary
+                    } else {
+                        null
+                    },
+                    customColorTertiary = if (savedJson.hasField("customColorTertiary")) {
+                        saved.customColorTertiary
+                    } else {
+                        null
+                    },
+                    customColorError = if (savedJson.hasField("customColorError")) {
+                        saved.customColorError
+                    } else {
+                        null
+                    }
                 )
             }
         }

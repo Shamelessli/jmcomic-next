@@ -328,13 +328,24 @@ class ComicDetailViewModel(
                             errorMsg = data.message
                         )
                     }
+                    toastManager.showAsync(data.message)
                 }
 
                 is NetWorkResult.Success<CommentComicResponse> -> {
                     log("commentArg $content, $comicId, $commentId")
-                    toastManager.showAsync(data.data.msg)
-                    if (data.data.status == "ok") {
+                    val status = data.data.status.trim()
+                    val isSuccess = status.isBlank()
+                        || status.equals("ok", ignoreCase = true)
+                        || status.equals("success", ignoreCase = true)
+                    if (isSuccess) {
+                        toastManager.showAsync(data.data.msg.ifBlank { "发送成功" })
                         onSuccess?.invoke()
+                    } else {
+                        val message = data.data.msg.ifBlank { "发送评论失败" }
+                        _commentComicState.update {
+                            it.copy(isError = true, errorMsg = message)
+                        }
+                        toastManager.showAsync(message)
                     }
                 }
             }
@@ -342,6 +353,26 @@ class ComicDetailViewModel(
                 it.copy(
                     isLoading = false,
                 )
+            }
+        }
+    }
+
+    // 评论点赞：记录已点赞的评论ID，避免重复点赞
+    private val _likedCommentIds = MutableStateFlow<Set<Int>>(emptySet())
+    val likedCommentIds = _likedCommentIds.asStateFlow()
+
+    fun likeComment(commentId: Int, onResult: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            when (val data = comicRepository.likeComment(commentId)) {
+                is NetWorkResult.Error -> {
+                    toastManager.showAsync("点赞失败：${data.message}")
+                    onResult(false)
+                }
+
+                is NetWorkResult.Success<CommentComicResponse> -> {
+                    _likedCommentIds.update { it + commentId }
+                    onResult(true)
+                }
             }
         }
     }

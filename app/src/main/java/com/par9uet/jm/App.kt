@@ -37,20 +37,25 @@ import androidx.navigation.compose.rememberNavController
 import com.par9uet.jm.store.InitManager
 import com.par9uet.jm.store.LocalSettingManager
 import com.par9uet.jm.store.ToastManager
+import com.par9uet.jm.store.UserManager
 import com.par9uet.jm.ui.screens.AppLockScreen
 import com.par9uet.jm.ui.screens.AppScreen
 import com.par9uet.jm.ui.screens.NsfwWarningDialog
 import com.par9uet.jm.ui.screens.WelcomeScreen
 import com.par9uet.jm.ui.viewModel.GlobalViewModel
+import com.par9uet.jm.ui.viewModel.UserViewModel
+import kotlinx.coroutines.flow.first
 import org.koin.compose.getKoin
 import org.koin.compose.viewmodel.koinActivityViewModel
 
 @Composable
 fun App(
     globalViewModel: GlobalViewModel = koinActivityViewModel(),
+    userViewModel: UserViewModel = koinActivityViewModel(),
     toastManager: ToastManager = getKoin().get(),
     localSettingManager: LocalSettingManager = getKoin().get(),
     initManager: InitManager = getKoin().get(),
+    userManager: UserManager = getKoin().get(),
     remoteSettingManager: com.par9uet.jm.store.RemoteSettingManager = getKoin().get(),
     imageLoader: coil.ImageLoader = getKoin().get()
 ) {
@@ -93,6 +98,23 @@ fun App(
     // 应用锁被关闭时解除锁定
     LaunchedEffect(localSetting.appLockEnabled) {
         if (settingsLoaded && !localSetting.appLockEnabled) isLocked = false
+    }
+
+    // 自动签到：设置加载完成且自动签到开关开启时执行
+    LaunchedEffect(settingsLoaded) {
+        if (!settingsLoaded) return@LaunchedEffect
+        val ls = localSettingManager.localSettingState.value
+        if (!ls.autoSignInEnabled) return@LaunchedEffect
+        if (!userManager.isLoginState.first()) return@LaunchedEffect
+        kotlinx.coroutines.delay(2000L)
+        userViewModel.getSignInData()
+        val signData = kotlinx.coroutines.withTimeoutOrNull(10000L) {
+            userViewModel.signDataState.first { state -> !state.isLoading }
+        } ?: return@LaunchedEffect
+        val todayDayOfMonth = java.time.LocalDate.now().dayOfMonth
+        val isSigned = signData.data?.dateMap?.get(todayDayOfMonth)?.isSign == true
+        if (isSigned) return@LaunchedEffect
+        userViewModel.signIn()
     }
 
     // 从后台返回时重新锁定

@@ -37,7 +37,10 @@ import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Menu
+import androidx.compose.material.icons.rounded.Psychology
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Replay
 import androidx.compose.material.icons.rounded.SelectAll
@@ -149,6 +152,7 @@ fun AiChatScreen(
                     onSwitchUserBranch = aiChatViewModel::switchUserBranch,
                     onInputChange = aiChatViewModel::changeInput,
                     onWebSearchChange = aiChatViewModel::changeWebSearchEnabled,
+                    onDeepThinkingChange = aiChatViewModel::changeDeepThinkingEnabled,
                     onSearchSettingsChange = aiChatViewModel::changeSearchSettings,
                     onSend = aiChatViewModel::send,
                     onStop = aiChatViewModel::stopGenerating,
@@ -187,6 +191,7 @@ fun AiChatScreen(
                     onSwitchUserBranch = aiChatViewModel::switchUserBranch,
                     onInputChange = aiChatViewModel::changeInput,
                     onWebSearchChange = aiChatViewModel::changeWebSearchEnabled,
+                    onDeepThinkingChange = aiChatViewModel::changeDeepThinkingEnabled,
                     onSearchSettingsChange = aiChatViewModel::changeSearchSettings,
                     onSend = aiChatViewModel::send,
                     onStop = aiChatViewModel::stopGenerating,
@@ -211,6 +216,7 @@ private fun AiChatContent(
     onSwitchUserBranch: (String, Int) -> Unit,
     onInputChange: (String) -> Unit,
     onWebSearchChange: (Boolean) -> Unit,
+    onDeepThinkingChange: (Boolean) -> Unit,
     onSearchSettingsChange: (AiSearchSettings) -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
@@ -248,10 +254,12 @@ private fun AiChatContent(
         ChatInputBar(
             input = uiState.input,
             webSearchEnabled = uiState.webSearchEnabled,
+            deepThinkingEnabled = uiState.deepThinkingEnabled,
             searchSettings = uiState.searchSettings,
             isSending = uiState.isSending,
             onInputChange = onInputChange,
             onWebSearchChange = onWebSearchChange,
+            onDeepThinkingChange = onDeepThinkingChange,
             onSearchSettingsChange = onSearchSettingsChange,
             onSend = onSend,
             onStop = onStop
@@ -277,21 +285,13 @@ private fun AiChatHeader(
                 Icon(Icons.Rounded.Menu, contentDescription = "对话列表")
             }
         }
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.titleMedium
-            )
-            Text(
-                text = "chat-model",
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
+        Text(
+            modifier = Modifier.weight(1f),
+            text = title,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.titleMedium
+        )
         IconButton(onClick = onNewConversation) {
             Icon(Icons.Rounded.Add, contentDescription = "新建对话")
         }
@@ -899,11 +899,79 @@ private fun MessageActionRow(
 
 @Composable
 private fun AssistantMessageContent(message: AiChatMessage) {
-    val answer = remember(message.content) { cleanAssistantAnswer(message.content) }
-    if (answer.isBlank()) {
+    val parsed = remember(message.content) { parseThinkContent(message.content) }
+    if (parsed.blocks.isEmpty() && parsed.answer.isBlank()) {
         AssistantLoadingContent()
     } else {
-        MarkdownContent(text = answer)
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            parsed.blocks.forEachIndexed { index, block ->
+                ThinkBlockView(
+                    block = block,
+                    isThinking = index == parsed.blocks.lastIndex && parsed.isThinking
+                )
+            }
+            if (parsed.answer.isNotBlank()) {
+                MarkdownContent(text = parsed.answer)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ThinkBlockView(
+    block: ThinkBlockContent,
+    isThinking: Boolean,
+    modifier: Modifier = Modifier
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { if (!isThinking) expanded = !expanded },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    modifier = Modifier.size(16.dp),
+                    imageVector = Icons.Rounded.Psychology,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    modifier = Modifier.weight(1f),
+                    text = if (isThinking) "正在思考..." else "思考过程",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (isThinking) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(14.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    Icon(
+                        imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            if (expanded || isThinking) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = block.content,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
     }
 }
 
@@ -931,10 +999,12 @@ private fun AssistantLoadingContent() {
 private fun ChatInputBar(
     input: String,
     webSearchEnabled: Boolean,
+    deepThinkingEnabled: Boolean,
     searchSettings: AiSearchSettings,
     isSending: Boolean,
     onInputChange: (String) -> Unit,
     onWebSearchChange: (Boolean) -> Unit,
+    onDeepThinkingChange: (Boolean) -> Unit,
     onSearchSettingsChange: (AiSearchSettings) -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit
@@ -954,6 +1024,19 @@ private fun ChatInputBar(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                FilterChip(
+                    selected = deepThinkingEnabled,
+                    onClick = { onDeepThinkingChange(!deepThinkingEnabled) },
+                    leadingIcon = {
+                        Icon(
+                            modifier = Modifier.size(18.dp),
+                            imageVector = Icons.Rounded.Psychology,
+                            contentDescription = null
+                        )
+                    },
+                    label = { Text("深度思考") }
+                )
+                Spacer(modifier = Modifier.width(8.dp))
                 FilterChip(
                     selected = webSearchEnabled,
                     onClick = { onWebSearchChange(!webSearchEnabled) },
@@ -1401,6 +1484,47 @@ private fun cleanAssistantAnswer(content: String): String {
         .replace(THINK_OPEN, "")
         .replace(THINK_CLOSE, "")
         .trim()
+}
+
+data class ThinkBlockContent(val content: String)
+
+data class ParsedThinkContent(
+    val blocks: List<ThinkBlockContent>,
+    val answer: String,
+    val isThinking: Boolean
+)
+
+fun parseThinkContent(content: String): ParsedThinkContent {
+    val blocks = mutableListOf<ThinkBlockContent>()
+    val answer = StringBuilder()
+    var remaining = content
+
+    while (true) {
+        val open = remaining.indexOf(THINK_OPEN)
+        if (open < 0) {
+            answer.append(remaining)
+            break
+        }
+        val thinkStart = open + THINK_OPEN.length
+        val close = remaining.indexOf(THINK_CLOSE, thinkStart)
+        if (close < 0) {
+            // 未闭合：思考进行中，把 open 之前的内容加入正文，思考内容放入块
+            answer.append(remaining.substring(0, open))
+            blocks.add(ThinkBlockContent(remaining.substring(thinkStart)))
+            return ParsedThinkContent(blocks, answer.toString().trim(), isThinking = true)
+        }
+        val nextOpen = remaining.indexOf(THINK_OPEN, thinkStart)
+        if (nextOpen in 0 until close) {
+            // 嵌套 open 视为不闭合：去除所有 think 标签后作为普通正文
+            answer.append(remaining.replace(THINK_OPEN, "").replace(THINK_CLOSE, ""))
+            break
+        }
+        answer.append(remaining.substring(0, open))
+        blocks.add(ThinkBlockContent(remaining.substring(thinkStart, close)))
+        remaining = remaining.substring(close + THINK_CLOSE.length)
+    }
+
+    return ParsedThinkContent(blocks, answer.toString().trim(), isThinking = false)
 }
 
 private fun numberedListText(line: String): String? {

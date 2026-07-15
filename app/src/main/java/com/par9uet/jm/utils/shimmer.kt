@@ -7,6 +7,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.geometry.Offset
@@ -25,10 +26,11 @@ fun Modifier.shimmer(): Modifier = composed {
         label = "shimmerTranslate"
     )
 
+    val baseColor = MaterialTheme.colorScheme.surfaceVariant
     val shimmerColors = listOf(
-        Color.LightGray.copy(alpha = 0.6f),
-        Color.LightGray.copy(alpha = 0.2f),
-        Color.LightGray.copy(alpha = 0.6f),
+        baseColor.copy(alpha = 0.6f),
+        baseColor.copy(alpha = 0.2f),
+        baseColor.copy(alpha = 0.6f),
     )
 
     val brush = Brush.linearGradient(

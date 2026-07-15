@@ -16,6 +16,7 @@ data class UserCollectComicListResponse(
         val image: String,
         val category: Category,
         val category_sub: Category,
+        val tags: List<String>? = null,
     ) {
         data class Category(
             val id: String?,
@@ -33,10 +34,14 @@ data class UserCollectComicListResponse(
                 readCount = 0,
                 likeCount = 0,
                 commentCount = 0,
-                tagList = listOfNotNull(
-                    it.category.title,
-                    it.category_sub.title
-                ).filter { title -> title.isNotBlank() }.distinct(),
+                tagList = if (!it.tags.isNullOrEmpty()) {
+                    it.tags.filter { t -> t.isNotBlank() }.distinct()
+                } else {
+                    listOfNotNull(
+                        it.category.title,
+                        it.category_sub.title
+                    ).filter { title -> title.isNotBlank() }.distinct()
+                },
                 roleList = listOf(),
                 workList = listOf(),
                 isLike = false,
