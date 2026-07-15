@@ -10,11 +10,13 @@ JMcomic Next 是一个基于 Kotlin、Jetpack Compose 与 Material 3 构建的 A
 
 感谢[LINUX DO论坛](https://linux.do)以及对本项目提供大力支持的[RawChat团队](https://linux.do/u/RawChat)，没有各位的支持，这个项目不可能出现，由衷感谢各位！
 
-Linux.do提供建议的佬友们：[dijunwanshou](https://linux.do/u/dijunwanshou/summary)、[zeroLin](https://linux.do/u/zerolin/summary)、[dunxuan](https://linux.do/u/dunxuan/summary)、[lyston](https://linux.do/u/lyston/summary)、[catnap](https://linux.do/u/catnap/summary)、[JasonGui](https://linux.do/u/jasongui/summary)、[sswh317](https://linux.do/u/sswh317/summary)、[Jealousy](https://linux.do/u/jealousy/summary)
+Linux.do提供建议的佬友们：[dijunwanshou](https://linux.do/u/dijunwanshou/summary)、[zeroLin](https://linux.do/u/zerolin/summary)、[dunxuan](https://linux.do/u/dunxuan/summary)、[lyston](https://linux.do/u/lyston/summary)、[catnap](https://linux.do/u/catnap/summary)、[JasonGui](https://linux.do/u/jasongui/summary)、[sswh317](https://linux.do/u/sswh317/summary)、[Jealousy](https://linux.do/u/jealousy/summary)、[lxy521031](https://linux.do/u/lxy521031/summary)、[Timothy](https://linux.do/u/timothy/summary)、[sylarQAQ](https://linux.do/u/sylarqaq/summary)、[cftyhn](https://linux.do/u/cftyhn/summary)、[chowhound](https://linux.do/u/chowhound/summary)
 
-Github提交issue的各位：[yinshu2002](https://github.com/yinshu2002)、[lyston11 (lyston)](https://github.com/lyston11)、[Nines70 (Lpublic)](https://github.com/Nines70)、[lin39c5bb](https://github.com/lin39c5bb)
+Github提交issue的各位：[yinshu2002](https://github.com/yinshu2002)、[lyston11 (lyston)](https://github.com/lyston11)、[Nines70 (Lpublic)](https://github.com/Nines70)、[lin39c5bb](https://github.com/lin39c5bb)、[ZhangXusen (小国际)](https://github.com/ZhangXusen)、[Luo923 (Tao Luo)](https://github.com/Luo923)、[snakeJohn (Sneoans)](https://github.com/snakeJohn)、[franklleee](https://github.com/franklleee)、[788gdd (788)](https://github.com/788gdd)
 
-由衷感谢[Jea1ousy (DB)](https://github.com/Jea1ousy)、[linze0721 (萧瑟)](https://github.com/linze0721)为本项目添砖加瓦！
+由衷感谢[Jea1ousy (DB)](https://github.com/Jea1ousy)、[linze0721 (萧瑟)](https://github.com/linze0721)、[hifumi_mizuhara](https://linux.do/u/hifumi_mizuhara)为本项目添砖加瓦！
+
+**以及我亲爱的QQ群友们！你们的需求是我前进的动力！回家的路永远都在！**
 
 项目的主要目标是把传统 Android 漫画客户端改造成更贴近现代 Android 设计习惯的 Compose 应用：页面使用 Material You 风格，入口和阅读流程尽量简洁，网络请求、登录状态、本地设置与缓存数据通过较清晰的 Repository、Manager、Storage、ViewModel 分层组织。
 
