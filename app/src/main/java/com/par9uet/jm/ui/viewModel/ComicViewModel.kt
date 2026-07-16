@@ -177,7 +177,9 @@ class ComicViewModel(
     val weekComicPager = combine(
         _weekFilterState,
         localSettingManager.localSettingState
-    ) { filter, localSetting -> filter to localSetting.blockedTagList }
+    ) { filter, localSetting ->
+        filter to (localSetting.blockedTagList + localSetting.homeExcludedTags).distinct()
+    }
         .flatMapLatest { (filter, blockedTagList) ->
         Pager(
             config = PagingConfig(

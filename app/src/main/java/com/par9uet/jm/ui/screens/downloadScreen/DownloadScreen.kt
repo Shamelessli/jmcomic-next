@@ -1,6 +1,5 @@
 package com.par9uet.jm.ui.screens.downloadScreen
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,6 +34,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -68,8 +68,16 @@ fun DownloadScreen(
     CommonScaffold(title = "下载") {
         Column {
             if (editState.editing) {
+                // 仅当选中项中存在"正在缓存"分组时才显示暂停/继续按钮
+                val activeItemIds = remember(activeGroups) {
+                    activeGroups.flatMap { it.itemIds }.toSet()
+                }
+                val showPauseResume = remember(editState.selectedIds, activeItemIds) {
+                    editState.selectedIds.any { it in activeItemIds }
+                }
                 DownloadEditBar(
                     selectedCount = editState.selectedIds.size,
+                    showPauseResume = showPauseResume,
                     onClose = downloadViewModel::clearSelection,
                     onDelete = downloadViewModel::deleteSelected,
                     onPause = downloadViewModel::pauseSelected,
@@ -332,6 +340,7 @@ private fun CompletedGrid(
 @Composable
 private fun DownloadEditBar(
     selectedCount: Int,
+    showPauseResume: Boolean,
     onClose: () -> Unit,
     onDelete: () -> Unit,
     onPause: () -> Unit,
@@ -362,23 +371,25 @@ private fun DownloadEditBar(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                TextButton(onClick = onStart) {
-                    Icon(
-                        Icons.Rounded.PlayArrow,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.size(4.dp))
-                    Text("继续")
-                }
-                TextButton(onClick = onPause) {
-                    Icon(
-                        Icons.Rounded.Pause,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.size(4.dp))
-                    Text("暂停")
+                if (showPauseResume) {
+                    TextButton(onClick = onStart) {
+                        Icon(
+                            Icons.Rounded.PlayArrow,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.size(4.dp))
+                        Text("继续")
+                    }
+                    TextButton(onClick = onPause) {
+                        Icon(
+                            Icons.Rounded.Pause,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.size(4.dp))
+                        Text("暂停")
+                    }
                 }
                 TextButton(onClick = onRedownload) {
                     Icon(

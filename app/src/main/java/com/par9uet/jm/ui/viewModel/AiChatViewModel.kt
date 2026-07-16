@@ -5,26 +5,46 @@ import androidx.lifecycle.viewModelScope
 import com.par9uet.jm.data.models.AiChatConversation
 import com.par9uet.jm.data.models.AiChatMessage
 import com.par9uet.jm.data.models.AiChatMessageBranch
+import com.par9uet.jm.data.models.AiPersona
 import com.par9uet.jm.data.models.AiSearchSettings
 import com.par9uet.jm.repository.AiChatRepository
 import com.par9uet.jm.repository.OpenAiChatMessage
+import com.par9uet.jm.repository.SearchProgress
+import com.par9uet.jm.repository.WebSearchResult
 import com.par9uet.jm.storage.AiChatStorage
+import com.par9uet.jm.storage.PersonaStorage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.UUID
 
 class AiChatViewModel(
     private val aiChatRepository: AiChatRepository,
-    private val aiChatStorage: AiChatStorage
+    private val aiChatStorage: AiChatStorage,
+    private val personaStorage: PersonaStorage
 ) : ViewModel() {
     enum class RetryMode {
         Regenerate,
         Detailed,
         Concise
+    }
+
+    /**
+     * 联网搜索过程可视化状态：用于 UI 显示搜索进度卡片。
+     */
+    sealed class SearchUiState {
+        object Idle : SearchUiState()
+        data class Querying(val query: String) : SearchUiState()
+        data class Found(val count: Int, val results: List<WebSearchResult>) : SearchUiState()
+        data class Done(val results: List<WebSearchResult>) : SearchUiState()
+        data class Failed(val message: String) : SearchUiState()
     }
 
     data class AiChatUiState(
@@ -35,8 +55,15 @@ class AiChatViewModel(
         val deepThinkingEnabled: Boolean = false,
         val searchSettings: AiSearchSettings = AiSearchSettings(),
         val isSending: Boolean = false,
-        val errorMessage: String? = null
-    )
+        val errorMessage: String? = null,
+        val personas: List<AiPersona> = emptyList(),
+        val activePersonaId: String? = null,
+        val searchUiState: SearchUiState = SearchUiState.Idle,
+        val lastSearchResults: List<WebSearchResult> = emptyList()
+    ) {
+        val activePersona: AiPersona?
+            get() = personas.firstOrNull { it.id == activePersonaId }
+    }
 
     private val _uiState = MutableStateFlow(AiChatUiState())
     val uiState = _uiState.asStateFlow()
@@ -45,16 +72,38 @@ class AiChatViewModel(
 
     init {
         val conversations = aiChatStorage.get()
-        val normalized = conversations.ifEmpty { listOf(newConversationModel()) }
+        val normalizedConversations = conversations.ifEmpty { listOf(newConversationModel()) }
             .sortedByDescending { it.updatedAt }
-        aiChatStorage.set(normalized)
+        aiChatStorage.set(normalizedConversations)
+
+        // 初始化人格列表与激活ID
+        val personas = personaStorage.get()
+        val activePersonaId = personaStorage.getActiveId()
+
         _uiState.update {
             it.copy(
-                conversations = normalized,
-                activeConversationId = normalized.first().id,
-                searchSettings = aiChatStorage.getSearchSettings()
+                conversations = normalizedConversations,
+                activeConversationId = normalizedConversations.first().id,
+                searchSettings = aiChatStorage.getSearchSettings(),
+                personas = personas,
+                activePersonaId = activePersonaId
             )
         }
+
+        // 订阅 PersonaStorage 的变化：当用户在人格管理页新建/编辑/删除人格后，
+        // AiChatViewModel 会自动收到更新，保证对话页的 PersonaSwitchDialog 列表实时同步。
+        combine(
+            personaStorage.state,
+            personaStorage.activeIdState
+        ) { personaList, activeId ->
+            // personaStorage.state 初始值可能为 null（懒加载），用 get() 兜底
+            val list = personaList ?: personaStorage.get()
+            list to activeId
+        }.distinctUntilChanged().onEach { (list, activeId) ->
+            _uiState.update {
+                it.copy(personas = list, activePersonaId = activeId)
+            }
+        }.launchIn(viewModelScope)
     }
 
     fun changeInput(value: String) {
@@ -75,8 +124,52 @@ class AiChatViewModel(
         _uiState.update { it.copy(searchSettings = normalized) }
     }
 
+    // ============== 人格面具 ==============
+
+    fun refreshPersonas() {
+        val personas = personaStorage.get()
+        val activeId = personaStorage.getActiveId()
+        _uiState.update {
+            it.copy(personas = personas, activePersonaId = activeId)
+        }
+    }
+
+    /**
+     * 切换当前激活的人格（全局默认人格）。
+     * 不影响已存在的对话，只影响后续新创建的对话与无 personaId 绑定的对话。
+     */
+    fun setActivePersona(id: String?) {
+        personaStorage.setActiveId(id)
+        _uiState.update { it.copy(activePersonaId = id) }
+    }
+
+    /**
+     * 将某次对话绑定到指定人格。传 null 表示使用全局默认人格。
+     */
+    fun bindConversationPersona(conversationId: String, personaId: String?) {
+        val current = _uiState.value
+        val conversations = current.conversations.map { conv ->
+            if (conv.id == conversationId) conv.copy(personaId = personaId.orEmpty())
+            else conv
+        }
+        persist(conversations)
+        _uiState.update { it.copy(conversations = conversations) }
+    }
+
+    /**
+     * 解析某次对话应使用的人格：优先对话自身绑定，否则使用全局激活人格。
+     */
+    fun resolvePersonaForConversation(conversationId: String): AiPersona? {
+        val state = _uiState.value
+        val conversation = state.conversations.firstOrNull { it.id == conversationId } ?: return null
+        val pid = conversation.personaId.ifBlank { state.activePersonaId }
+        return pid?.let { pid -> state.personas.firstOrNull { it.id == pid } }
+    }
+
     fun createConversation() {
-        val conversation = newConversationModel()
+        val conversation = newConversationModel().copy(
+            personaId = _uiState.value.activePersonaId.orEmpty()
+        )
         val conversations = listOf(conversation) + _uiState.value.conversations
         persist(conversations)
         _uiState.update {
@@ -118,7 +211,12 @@ class AiChatViewModel(
     fun stopGenerating() {
         sendJob?.cancel()
         sendJob = null
-        _uiState.update { it.copy(isSending = false) }
+        _uiState.update {
+            it.copy(
+                isSending = false,
+                searchUiState = SearchUiState.Idle
+            )
+        }
     }
 
     fun send() {
@@ -152,10 +250,13 @@ class AiChatViewModel(
                 activeConversationId = nextActive.id,
                 input = "",
                 isSending = true,
-                errorMessage = null
+                errorMessage = null,
+                searchUiState = SearchUiState.Idle,
+                lastSearchResults = emptyList()
             )
         }
 
+        val persona = resolvePersonaForConversation(nextActive.id)
         startAssistantRequest(
             conversationId = nextActive.id,
             assistantMessageId = assistantMessage.id,
@@ -165,7 +266,8 @@ class AiChatViewModel(
             retryInstruction = null,
             webSearchEnabled = current.webSearchEnabled,
             deepThinkingEnabled = current.deepThinkingEnabled,
-            searchSettings = current.searchSettings
+            searchSettings = current.searchSettings,
+            persona = persona
         )
     }
 
@@ -198,10 +300,13 @@ class AiChatViewModel(
                 conversations = nextConversations,
                 activeConversationId = nextActive.id,
                 isSending = true,
-                errorMessage = null
+                errorMessage = null,
+                searchUiState = SearchUiState.Idle,
+                lastSearchResults = emptyList()
             )
         }
 
+        val persona = resolvePersonaForConversation(nextActive.id)
         startAssistantRequest(
             conversationId = nextActive.id,
             assistantMessageId = assistantMessage.id,
@@ -211,7 +316,8 @@ class AiChatViewModel(
             retryInstruction = retryInstruction(mode),
             webSearchEnabled = current.webSearchEnabled,
             deepThinkingEnabled = current.deepThinkingEnabled,
-            searchSettings = current.searchSettings
+            searchSettings = current.searchSettings,
+            persona = persona
         )
     }
 
@@ -264,10 +370,13 @@ class AiChatViewModel(
                 conversations = nextConversations,
                 activeConversationId = nextActive.id,
                 isSending = true,
-                errorMessage = null
+                errorMessage = null,
+                searchUiState = SearchUiState.Idle,
+                lastSearchResults = emptyList()
             )
         }
 
+        val persona = resolvePersonaForConversation(nextActive.id)
         startAssistantRequest(
             conversationId = nextActive.id,
             assistantMessageId = assistantMessage.id,
@@ -280,7 +389,8 @@ class AiChatViewModel(
             retryInstruction = null,
             webSearchEnabled = current.webSearchEnabled,
             deepThinkingEnabled = current.deepThinkingEnabled,
-            searchSettings = current.searchSettings
+            searchSettings = current.searchSettings,
+            persona = persona
         )
     }
 
@@ -330,19 +440,34 @@ class AiChatViewModel(
         retryInstruction: String?,
         webSearchEnabled: Boolean,
         deepThinkingEnabled: Boolean,
-        searchSettings: AiSearchSettings
+        searchSettings: AiSearchSettings,
+        persona: AiPersona?
     ) {
         sendJob = viewModelScope.launch {
             try {
+                // 1. 决策是否联网搜索（AI 自主 + 用户手动开关）
+                val needSearch = aiChatRepository.shouldAutoSearch(
+                    text = userQuery,
+                    manualEnabled = webSearchEnabled,
+                    settings = searchSettings
+                )
+                val webContextText = if (needSearch) {
+                    resolveWebContextWithProgress(
+                        text = userQuery,
+                        settings = searchSettings
+                    )
+                } else null
+
+                // 2. 搜索结束后清空进度状态，进入 AI 流式生成阶段
+                _uiState.update { it.copy(searchUiState = SearchUiState.Idle) }
+
+                // 3. 构建请求消息（含人格面具 + 搜索上下文 + 深度思考指令）
                 val requestMessages = buildRequestMessages(
                     messages = requestSourceMessages,
-                    webContext = resolveWebContext(
-                        text = userQuery,
-                        webSearchEnabled = webSearchEnabled,
-                        settings = searchSettings
-                    ),
+                    webContext = webContextText,
                     retryInstruction = retryInstruction,
-                    deepThinkingEnabled = deepThinkingEnabled
+                    deepThinkingEnabled = deepThinkingEnabled,
+                    persona = persona
                 )
                 aiChatRepository.streamChat(messages = requestMessages) { delta ->
                     appendAssistantDelta(conversationId, assistantMessageId, delta)
@@ -351,12 +476,18 @@ class AiChatViewModel(
                 _uiState.update { it.copy(isSending = false) }
             } catch (_: CancellationException) {
                 markAssistantFinished(conversationId, assistantMessageId, assistantStartedAt)
-                _uiState.update { it.copy(isSending = false) }
+                _uiState.update {
+                    it.copy(
+                        isSending = false,
+                        searchUiState = SearchUiState.Idle
+                    )
+                }
             } catch (e: Exception) {
                 markAssistantFinished(conversationId, assistantMessageId, assistantStartedAt)
                 _uiState.update {
                     it.copy(
                         isSending = false,
+                        searchUiState = SearchUiState.Idle,
                         errorMessage = e.message ?: "AI 请求失败"
                     )
                 }
@@ -406,32 +537,57 @@ class AiChatViewModel(
         }
     }
 
+    /**
+     * 构建发送给上游 AI 的消息列表，依次注入：
+     * 1. 基础系统提示词（含日期、思考指令、联网引用要求）
+     * 2. 人格面具描述（若存在）
+     * 3. 联网搜索上下文（若存在）
+     * 4. 重试指令（若存在）
+     * 5. 历史对话消息
+     */
     private fun buildRequestMessages(
         messages: List<AiChatMessage>,
         webContext: String?,
         retryInstruction: String?,
-        deepThinkingEnabled: Boolean
+        deepThinkingEnabled: Boolean,
+        persona: AiPersona?
     ): List<OpenAiChatMessage> {
         val today = todayText()
         val requestMessages = messages.map {
             OpenAiChatMessage(role = it.role, content = it.content)
         }
-        val baseSystemPrompt = if (deepThinkingEnabled) {
-            "当前日期是 $today。请先用 <think></think> 标签包裹你的思考过程（包含分析、推理和决策步骤），然后在标签外输出给用户看的正式回答。涉及新闻、版本、价格、政策、人物职位、时间敏感信息时，优先使用客户端提供的联网搜索结果；没有可靠搜索结果时必须说明无法确认最新信息。"
-        } else {
-            "当前日期是 $today。请直接输出给用户看的正式回答，不要输出内部推理过程、隐藏分析标记或占位内容。涉及新闻、版本、价格、政策、人物职位、时间敏感信息时，优先使用客户端提供的联网搜索结果；没有可靠搜索结果时必须说明无法确认最新信息。"
+
+        val baseSystemPrompt = buildString {
+            append("当前日期是 $today。")
+            if (deepThinkingEnabled) {
+                append("请先用 <think> 标签包裹你的深度思考过程（包含问题拆解、逻辑推导、可能存在的陷阱评估），然后在标签外输出给用户看的正式回答。")
+            } else {
+                append("请直接输出给用户看的正式回答，不要输出内部推理过程、隐藏分析标记或占位内容。")
+            }
+            append("涉及新闻、版本、价格、政策、人物职位、时间敏感信息时，优先使用客户端提供的联网搜索结果；没有可靠搜索结果时必须说明无法确认最新信息，不要用旧知识冒充最新信息。")
+            append("回答使用中文（除非用户用其他语言提问或要求外语回答）。代码块使用 ``` 标注语言。")
         }
+
         val systemPrompts = mutableListOf(
-            OpenAiChatMessage(
-                role = "system",
-                content = baseSystemPrompt
-            )
+            OpenAiChatMessage(role = "system", content = baseSystemPrompt)
         )
 
+        // 注入人格面具
+        persona?.let { p ->
+            val segment = p.toPromptSegment()
+            if (segment.isNotBlank()) {
+                systemPrompts += OpenAiChatMessage(
+                    role = "system",
+                    content = "以下是用户为你设定的角色人格，请在回答中遵循该设定（若与用户当前问题冲突，以用户问题为准）：\n$segment"
+                )
+            }
+        }
+
+        // 注入联网搜索上下文
         if (webContext != null) {
             systemPrompts += OpenAiChatMessage(
                 role = "system",
-                content = "下面是客户端在 $today 自动联网搜索到的参考信息。联网搜索已经开启，你必须优先阅读并使用这些结果回答；采用时请在答案中说明来源链接。若参考信息不足或不相关，请直接说明无法从联网结果确认，不要编造，也不要用旧知识冒充最新信息。\n\n$webContext"
+                content = "下面是客户端在 $today 自动联网搜索到的参考信息。联网搜索已经开启，你必须优先阅读并使用这些结果回答；采用时请在答案中说明来源链接，可在末尾用「参考来源：」段落列出。若参考信息不足或不相关，请直接说明无法从联网结果确认，不要编造，也不要用旧知识冒充最新信息。\n\n$webContext"
             )
         }
 
@@ -453,21 +609,49 @@ class AiChatViewModel(
         }
     }
 
-    private suspend fun resolveWebContext(
+    /**
+     * 调用 Repository 进行联网搜索，并通过 [SearchProgress] 回调驱动 UI 进度状态。
+     * 返回拼接好的上下文字符串（可能为 null）。
+     */
+    private suspend fun resolveWebContextWithProgress(
         text: String,
-        webSearchEnabled: Boolean,
         settings: AiSearchSettings
     ): String? {
-        if (!webSearchEnabled) return null
         val query = buildSearchQuery(text)
-        return aiChatRepository.searchWebContext(query, settings)
+        var capturedText: String? = null
+        aiChatRepository.searchWebContextWithProgress(query, settings) { progress ->
+            when (progress) {
+                is SearchProgress.Start -> {
+                    _uiState.update { it.copy(searchUiState = SearchUiState.Querying(progress.query)) }
+                }
+                is SearchProgress.Found -> {
+                    _uiState.update {
+                        it.copy(
+                            searchUiState = SearchUiState.Found(progress.count, progress.results),
+                            lastSearchResults = progress.results
+                        )
+                    }
+                }
+                is SearchProgress.Done -> {
+                    capturedText = progress.context.text.ifBlank { null }
+                    _uiState.update {
+                        it.copy(searchUiState = SearchUiState.Done(progress.context.results))
+                    }
+                }
+                is SearchProgress.Failed -> {
+                    capturedText = null
+                    _uiState.update { it.copy(searchUiState = SearchUiState.Failed(progress.message)) }
+                }
+            }
+        }
+        return capturedText
             ?: "客户端已尝试联网搜索，但没有获得可用结果。请在回答中明确说明无法从联网结果确认最新信息，不要使用旧知识冒充最新信息。"
     }
 
     private fun buildSearchQuery(text: String): String {
         val normalized = text.trim()
-        val suffix = " ${todayText()} 2026 最新"
-        return if (normalized.contains("2026") || normalized.contains("最新") || normalized.contains("今天") || normalized.contains("现在")) {
+        val suffix = " ${todayText()} 最新"
+        return if (normalized.contains("最新") || normalized.contains("今天") || normalized.contains("现在")) {
             normalized
         } else {
             normalized + suffix

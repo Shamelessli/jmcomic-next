@@ -4,6 +4,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,9 +19,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.MenuBook
 import androidx.compose.material.icons.rounded.Api
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Bookmarks
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.CloudSync
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.Download
@@ -34,6 +39,7 @@ import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Psychology
 import androidx.compose.material.icons.rounded.Recommend
 import androidx.compose.material.icons.rounded.Source
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.BugReport
@@ -44,9 +50,12 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -115,6 +124,7 @@ fun LocalSettingScreen(
     val localSetting by localSettingManager.localSettingState.collectAsState()
     var settingType by remember { mutableStateOf<SettingType>(SettingType.Api) }
     var isOpenSettingSelectDialog by remember { mutableStateOf(false) }
+    var showHomeExcludedTagsDialog by remember { mutableStateOf(false) }
 
     fun openSetting(type: SettingType) {
         settingType = type
@@ -180,7 +190,7 @@ fun LocalSettingScreen(
                     SettingsRow(
                         Icons.Rounded.GridView,
                         "\u7f51\u683c\u5217\u6570",
-                        "\u9996\u9875 ${gridColumnsText(localSetting.homeGridColumns)} \u00b7 \u6536\u85cf ${gridColumnsText(localSetting.collectGridColumns)} \u00b7 \u7f13\u5b58 ${gridColumnsText(localSetting.downloadGridColumns)} \u00b7 \u5386\u53f2 ${gridColumnsText(localSetting.historyGridColumns)}"
+                        "\u9996\u9875 ${gridColumnsText(localSetting.homeGridColumns)} \u00b7 \u6536\u85cf ${gridColumnsText(localSetting.collectGridColumns)} \u00b7 \u7f13\u5b58 ${gridColumnsText(localSetting.downloadGridColumns)} \u00b7 \u5386\u53f2 ${gridColumnsText(localSetting.historyGridColumns)} \u00b7 \u641c\u7d22 ${gridColumnsText(localSetting.searchGridColumns)}"
                     ) {
                         openSetting(SettingType.AllGridColumns)
                     }
@@ -234,6 +244,13 @@ fun LocalSettingScreen(
                             ) {
                                 openSetting(SettingType.RecommendSource)
                             }
+                        }
+                        SettingsRow(
+                            icon = Icons.Rounded.Block,
+                            title = "\u9996\u9875\u6807\u7b7e\u6392\u9664",
+                            value = if (localSetting.homeExcludedTags.isEmpty()) "\u672a\u8bbe\u7f6e" else "${localSetting.homeExcludedTags.size} \u4e2a\u6807\u7b7e"
+                        ) {
+                            showHomeExcludedTagsDialog = true
                         }
                     }
                 }
@@ -297,6 +314,12 @@ fun LocalSettingScreen(
                     SettingsRow(Icons.Rounded.CleaningServices, "\u7f13\u5b58\u6e05\u7406", "\u6e05\u7406\u56fe\u7247\u3001\u6f2b\u753b\u7b49\u7f13\u5b58\u6587\u4ef6") {
                         mainNavController.navigate("cacheCleanup")
                     }
+                    SettingsRow(Icons.Rounded.CloudSync, "\u6570\u636e\u5907\u4efd", "\u5907\u4efd\u4e0e\u6062\u590d\u5e94\u7528\u8bbe\u7f6e") {
+                        mainNavController.navigate("backupRestore")
+                    }
+                    SettingsRow(Icons.Rounded.Psychology, "\u4eba\u683c\u9762\u5177", "\u81ea\u5b9a\u4e49 AI \u540d\u5b57\u3001\u804c\u4e1a\u3001\u7b80\u4ecb\u7b49") {
+                        mainNavController.navigate("personaManager")
+                    }
                     SettingsRow(Icons.Rounded.SystemUpdate, "\u68c0\u67e5\u66f4\u65b0", "\u67e5\u770b GitHub Release \u6700\u65b0\u7248\u672c") {
                         mainNavController.navigate("checkUpdate")
                     }
@@ -313,6 +336,16 @@ fun LocalSettingScreen(
                 localSetting = localSetting,
                 localSettingManager = localSettingManager,
                 onDismiss = { isOpenSettingSelectDialog = false }
+            )
+        }
+        if (showHomeExcludedTagsDialog) {
+            HomeExcludedTagsDialog(
+                tags = localSetting.homeExcludedTags,
+                onConfirm = { tags ->
+                    localSettingManager.updateHomeExcludedTags(tags)
+                    showHomeExcludedTagsDialog = false
+                },
+                onDismiss = { showHomeExcludedTagsDialog = false }
             )
         }
     }
@@ -332,11 +365,13 @@ private fun SettingSelectDialogContent(
             collectColumns = localSetting.collectGridColumns,
             downloadColumns = localSetting.downloadGridColumns,
             historyColumns = localSetting.historyGridColumns,
-            onConfirm = { home, collect, download, history ->
+            searchColumns = localSetting.searchGridColumns,
+            onConfirm = { home, collect, download, history, search ->
                 localSettingManager.updateHomeGridColumns(home)
                 localSettingManager.updateCollectGridColumns(collect)
                 localSettingManager.updateDownloadGridColumns(download)
                 localSettingManager.updateHistoryGridColumns(history)
+                localSettingManager.updateSearchGridColumns(search)
                 onDismiss()
             },
             onDismiss = onDismiss
@@ -464,13 +499,15 @@ private fun AllGridColumnSliderDialog(
     collectColumns: Int,
     downloadColumns: Int,
     historyColumns: Int,
-    onConfirm: (Int, Int, Int, Int) -> Unit,
+    searchColumns: Int,
+    onConfirm: (Int, Int, Int, Int, Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var home by remember { mutableStateOf(homeColumns.toFloat()) }
     var collect by remember { mutableStateOf(collectColumns.toFloat()) }
     var download by remember { mutableStateOf(downloadColumns.toFloat()) }
     var history by remember { mutableStateOf(historyColumns.toFloat()) }
+    var search by remember { mutableStateOf(searchColumns.toFloat()) }
 
     @Composable
     fun SliderRow(
@@ -523,12 +560,89 @@ private fun AllGridColumnSliderDialog(
                 SliderRow(Icons.Rounded.Bookmarks, "收藏夹", collect) { collect = it }
                 SliderRow(Icons.Rounded.Download, "缓存", download) { download = it }
                 SliderRow(Icons.Rounded.History, "历史记录", history) { history = it }
+                SliderRow(Icons.Rounded.Search, "搜索", search) { search = it }
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(home.toInt(), collect.toInt(), download.toInt(), history.toInt()) }) {
+            TextButton(onClick = { onConfirm(home.toInt(), collect.toInt(), download.toInt(), history.toInt(), search.toInt()) }) {
                 Text("确定")
             }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun HomeExcludedTagsDialog(
+    tags: List<String>,
+    onConfirm: (List<String>) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var text by remember { mutableStateOf("") }
+    var currentTags by remember { mutableStateOf(tags) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("首页标签排除") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "添加标签后，首页推荐将不再显示包含这些标签的漫画",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text("输入标签名") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    trailingIcon = {
+                        IconButton(
+                            onClick = {
+                                val trimmed = text.trim()
+                                if (trimmed.isNotEmpty() && trimmed !in currentTags) {
+                                    currentTags = currentTags + trimmed
+                                    text = ""
+                                }
+                            }
+                        ) {
+                            Icon(Icons.Rounded.Add, contentDescription = "添加")
+                        }
+                    }
+                )
+                if (currentTags.isNotEmpty()) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        currentTags.forEach { tag ->
+                            InputChip(
+                                label = { Text(tag) },
+                                selected = false,
+                                onClick = {},
+                                trailingIcon = {
+                                    Icon(
+                                        Icons.Rounded.Close,
+                                        contentDescription = "删除",
+                                        modifier = Modifier
+                                            .size(16.dp)
+                                            .clickable {
+                                                currentTags = currentTags - tag
+                                            }
+                                    )
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(currentTags) }) { Text("确定") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("取消") }

@@ -171,8 +171,11 @@ fun HomeScreen(
 
     Column(modifier = Modifier.fillMaxSize()) {
         val currentPageData = homeComicState.list.getOrNull(selectedTabIndexState.value)
-        val comicList = remember(currentPageData, localSetting.blockedTagList) {
-            (currentPageData?.list ?: listOf()).filterBlockedTags(localSetting.blockedTagList)
+        val allExcludedTags = remember(localSetting.blockedTagList, localSetting.homeExcludedTags) {
+            (localSetting.blockedTagList + localSetting.homeExcludedTags).distinct()
+        }
+        val comicList = remember(currentPageData, allExcludedTags) {
+            (currentPageData?.list ?: listOf()).filterBlockedTags(allExcludedTags)
         }
         PullToRefreshBox(
             modifier = Modifier.fillMaxSize(),

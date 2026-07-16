@@ -83,3 +83,10 @@
 # OkHttp cookies are persisted with Gson.
 -keep class okhttp3.Cookie { *; }
 -dontwarn okhttp3.**
+
+# Core library desugaring: keep desugared java.time classes (j$.* package)
+# Prevents R8 from stripping desugared java.time APIs in release builds on Android 6/7
+-keep class j$.** { *; }
+-dontwarn j$.**
+-keep class java.time.** { *; }
+-dontwarn java.time.**

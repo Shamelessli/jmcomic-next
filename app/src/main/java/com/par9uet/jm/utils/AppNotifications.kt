@@ -1,5 +1,6 @@
 package com.par9uet.jm.utils
 
+import android.annotation.SuppressLint
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -49,6 +50,7 @@ fun ensureAppNotificationChannels(context: Context) {
  * 下载完成通知：点击后打开 MainActivity 并携带 [EXTRA_NAVIGATE_ROUTE] = checkUpdate，
  * 由 AppScreen 读取后导航到检查更新页面。
  */
+@SuppressLint("MissingPermission")
 fun showUpdateDownloadedNotification(
     context: Context,
     version: String,
@@ -81,6 +83,7 @@ fun showUpdateDownloadedNotification(
 
 const val EXTRA_UPDATE_SAVED_PATH = "update_saved_path"
 
+@SuppressLint("MissingPermission")
 fun showProgressNotification(
     context: Context,
     notificationId: Int,

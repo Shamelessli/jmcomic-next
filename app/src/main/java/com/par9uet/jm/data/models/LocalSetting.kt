@@ -83,10 +83,13 @@ data class LocalSetting(
     val collectGridColumns: Int = 0,
     val downloadGridColumns: Int = 0,
     val historyGridColumns: Int = 0,
+    val searchGridColumns: Int = 0,
     // 阅读图片内存优化：开启后限制并发解码数并降低解码采样率，缓解低端设备 OOM
     val readMemoryOptEnabled: Boolean = false,
     // 阅读并发解码上限：仅在 readMemoryOptEnabled 开启时生效，推荐值 2
     val readDecodeConcurrency: Int = 2,
+    // 首页推荐排除标签：带有这些标签的漫画不会出现在首页推荐中
+    val homeExcludedTags: List<String> = listOf(),
 )
 
 const val COLOR_PALETTE_PRESET_DEFAULT = "default"

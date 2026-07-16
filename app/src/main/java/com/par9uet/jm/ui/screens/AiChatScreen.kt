@@ -1,5 +1,10 @@
 package com.par9uet.jm.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -39,16 +44,22 @@ import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.Face
+import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.Psychology
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Replay
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SelectAll
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.ShortText
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.TravelExplore
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -64,6 +75,7 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
@@ -81,12 +93,10 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -97,8 +107,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.par9uet.jm.data.models.AiChatConversation
 import com.par9uet.jm.data.models.AiChatMessage
-import com.par9uet.jm.data.models.AiSearchEngine
+import com.par9uet.jm.data.models.AiPersona
+import com.par9uet.jm.data.models.AiSearchEngineProvider
 import com.par9uet.jm.data.models.AiSearchSettings
+import com.par9uet.jm.repository.WebSearchResult
 import com.par9uet.jm.store.ToastManager
 import com.par9uet.jm.ui.viewModel.AiChatViewModel
 import kotlinx.coroutines.launch
@@ -121,6 +133,7 @@ fun AiChatScreen(
     val activeConversation = uiState.conversations.firstOrNull {
         it.id == uiState.activeConversationId
     }
+    var personaSwitchOpen by rememberSaveable { mutableStateOf(false) }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val isTablet = maxWidth >= 700.dp
@@ -141,12 +154,12 @@ fun AiChatScreen(
                 VerticalDivider()
                 AiChatContent(
                     modifier = Modifier.weight(1f),
-                    title = activeConversation?.title ?: "AI 对话",
-                    messages = activeConversation?.messages.orEmpty(),
+                    conversation = activeConversation,
                     uiState = uiState,
                     showDrawerButton = false,
                     onOpenDrawer = {},
                     onNewConversation = aiChatViewModel::createConversation,
+                    onOpenPersonaSwitch = { personaSwitchOpen = true },
                     onRetry = aiChatViewModel::retry,
                     onEditUserMessage = aiChatViewModel::editUserMessage,
                     onSwitchUserBranch = aiChatViewModel::switchUserBranch,
@@ -180,12 +193,12 @@ fun AiChatScreen(
             ) {
                 AiChatContent(
                     modifier = Modifier.fillMaxSize(),
-                    title = activeConversation?.title ?: "AI 对话",
-                    messages = activeConversation?.messages.orEmpty(),
+                    conversation = activeConversation,
                     uiState = uiState,
                     showDrawerButton = true,
                     onOpenDrawer = { coroutineScope.launch { drawerState.open() } },
                     onNewConversation = aiChatViewModel::createConversation,
+                    onOpenPersonaSwitch = { personaSwitchOpen = true },
                     onRetry = aiChatViewModel::retry,
                     onEditUserMessage = aiChatViewModel::editUserMessage,
                     onSwitchUserBranch = aiChatViewModel::switchUserBranch,
@@ -200,17 +213,32 @@ fun AiChatScreen(
             }
         }
     }
+
+    if (personaSwitchOpen) {
+        PersonaSwitchDialog(
+            personas = uiState.personas,
+            activePersonaId = uiState.activePersonaId,
+            onDismiss = { personaSwitchOpen = false },
+            onSelect = { id ->
+                if (uiState.activeConversationId.isNotBlank()) {
+                    aiChatViewModel.bindConversationPersona(uiState.activeConversationId, id)
+                }
+                aiChatViewModel.setActivePersona(id)
+                personaSwitchOpen = false
+            }
+        )
+    }
 }
 
 @Composable
 private fun AiChatContent(
     modifier: Modifier,
-    title: String,
-    messages: List<AiChatMessage>,
+    conversation: AiChatConversation?,
     uiState: AiChatViewModel.AiChatUiState,
     showDrawerButton: Boolean,
     onOpenDrawer: () -> Unit,
     onNewConversation: () -> Unit,
+    onOpenPersonaSwitch: () -> Unit,
     onRetry: (String, AiChatViewModel.RetryMode) -> Unit,
     onEditUserMessage: (String, String) -> Unit,
     onSwitchUserBranch: (String, Int) -> Unit,
@@ -226,30 +254,40 @@ private fun AiChatContent(
         modifier = modifier.background(MaterialTheme.colorScheme.surface)
     ) {
         AiChatHeader(
-            title = title,
+            title = conversation?.title ?: "AI 对话",
+            personaName = uiState.activePersona?.name,
             showDrawerButton = showDrawerButton,
             onOpenDrawer = onOpenDrawer,
-            onNewConversation = onNewConversation
+            onNewConversation = onNewConversation,
+            onOpenPersonaSwitch = onOpenPersonaSwitch
         )
         HorizontalDivider()
         MessageList(
             modifier = Modifier.weight(1f),
-            messages = messages,
+            messages = conversation?.messages.orEmpty(),
             isSending = uiState.isSending,
+            searchUiState = uiState.searchUiState,
+            lastSearchResults = uiState.lastSearchResults,
             onRetry = onRetry,
             onEditUserMessage = onEditUserMessage,
             onSwitchUserBranch = onSwitchUserBranch,
             toastManager = toastManager
         )
         uiState.errorMessage?.let {
-            Text(
+            Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
-                text = it,
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodySmall
-            )
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                color = MaterialTheme.colorScheme.errorContainer,
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    text = it,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
         }
         ChatInputBar(
             input = uiState.input,
@@ -270,9 +308,11 @@ private fun AiChatContent(
 @Composable
 private fun AiChatHeader(
     title: String,
+    personaName: String?,
     showDrawerButton: Boolean,
     onOpenDrawer: () -> Unit,
-    onNewConversation: () -> Unit
+    onNewConversation: () -> Unit,
+    onOpenPersonaSwitch: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -285,13 +325,26 @@ private fun AiChatHeader(
                 Icon(Icons.Rounded.Menu, contentDescription = "对话列表")
             }
         }
-        Text(
-            modifier = Modifier.weight(1f),
-            text = title,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            style = MaterialTheme.typography.titleMedium
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.titleMedium
+            )
+            if (!personaName.isNullOrBlank()) {
+                Text(
+                    text = "人格：$personaName",
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        IconButton(onClick = onOpenPersonaSwitch) {
+            Icon(Icons.Rounded.Face, contentDescription = "切换人格面具")
+        }
         IconButton(onClick = onNewConversation) {
             Icon(Icons.Rounded.Add, contentDescription = "新建对话")
         }
@@ -384,7 +437,7 @@ private fun ConversationItem(
             .padding(horizontal = 12.dp)
             .clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = container),
-        shape = RoundedCornerShape(8.dp)
+        shape = RoundedCornerShape(16.dp)
     ) {
         Row(
             modifier = Modifier
@@ -423,6 +476,8 @@ private fun MessageList(
     modifier: Modifier,
     messages: List<AiChatMessage>,
     isSending: Boolean,
+    searchUiState: AiChatViewModel.SearchUiState,
+    lastSearchResults: List<WebSearchResult>,
     onRetry: (String, AiChatViewModel.RetryMode) -> Unit,
     onEditUserMessage: (String, String) -> Unit,
     onSwitchUserBranch: (String, Int) -> Unit,
@@ -440,24 +495,29 @@ private fun MessageList(
             }
     }
 
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) {
+    // 搜索进度卡片显示在最后一条用户消息之后、AI 回复之前
+    val showSearchCard = searchUiState !is AiChatViewModel.SearchUiState.Idle
+
+    LaunchedEffect(messages.size, showSearchCard) {
+        if (messages.isNotEmpty() || showSearchCard) {
             followOutput = true
-            listState.scrollToItem(messages.lastIndex)
+            val targetIndex = messages.lastIndex + if (showSearchCard) 1 else 0
+            listState.scrollToItem(targetIndex.coerceAtLeast(0))
         }
     }
 
-    LaunchedEffect(messages.lastOrNull()?.content, isSending, followOutput) {
-        if (messages.isNotEmpty() && followOutput && !listState.isScrollInProgress) {
-            listState.scrollToItem(messages.lastIndex)
+    LaunchedEffect(messages.lastOrNull()?.content, isSending, followOutput, showSearchCard) {
+        if (followOutput && !listState.isScrollInProgress) {
+            val targetIndex = messages.lastIndex + if (showSearchCard) 1 else 0
+            if (targetIndex >= 0) listState.scrollToItem(targetIndex)
         }
     }
 
-    if (messages.isEmpty()) {
+    if (messages.isEmpty() && !showSearchCard) {
         Box(modifier = modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(
-                    modifier = Modifier.size(44.dp),
+                    modifier = Modifier.size(48.dp),
                     imageVector = Icons.Rounded.AutoAwesome,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary
@@ -466,6 +526,12 @@ private fun MessageList(
                 Text(
                     text = "开始一段 AI 对话",
                     style = MaterialTheme.typography.titleMedium
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "可切换人格面具、联网搜索、深度思考？",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
@@ -488,6 +554,191 @@ private fun MessageList(
                 toastManager = toastManager
             )
         }
+        if (showSearchCard) {
+            item(key = "search-progress-card") {
+                SearchProgressCard(
+                    state = searchUiState,
+                    results = lastSearchResults
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 联网搜索进度卡片：类似 Lobe Chat 的过程可视化。
+ * 显示阶段：正在搜索 → 找到 N 条 → 完成 / 失败。
+ * 完成后展示引用来源列表，可点击跳转外部浏览器。
+ */
+@Composable
+private fun SearchProgressCard(
+    state: AiChatViewModel.SearchUiState,
+    results: List<WebSearchResult>
+) {
+    val uriHandler = LocalUriHandler.current
+    val displayResults = when (state) {
+        is AiChatViewModel.SearchUiState.Found -> state.results
+        is AiChatViewModel.SearchUiState.Done -> state.results
+        else -> results
+    }
+    val (containerColor, contentColor) = when (state) {
+        is AiChatViewModel.SearchUiState.Failed ->
+            MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
+        else ->
+            MaterialTheme.colorScheme.tertiaryContainer to MaterialTheme.colorScheme.onTertiaryContainer
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = containerColor)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                when (state) {
+                    is AiChatViewModel.SearchUiState.Querying -> {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = contentColor
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = "正在联网搜索",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = contentColor,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = state.query,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = contentColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    is AiChatViewModel.SearchUiState.Found -> {
+                        Icon(Icons.Rounded.Search, contentDescription = null, tint = contentColor)
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "已找到 ${state.count} 条结果",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = contentColor,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    is AiChatViewModel.SearchUiState.Done -> {
+                        Icon(Icons.Rounded.TravelExplore, contentDescription = null, tint = contentColor)
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "联网搜索完成（${state.results.size} 条引用）",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = contentColor,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    is AiChatViewModel.SearchUiState.Failed -> {
+                        Icon(Icons.Rounded.Search, contentDescription = null, tint = contentColor)
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "搜索失败：${state.message}",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = contentColor,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    AiChatViewModel.SearchUiState.Idle -> Unit
+                }
+            }
+            // 引用来源列表
+            if (displayResults.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                displayResults.take(5).forEachIndexed { index, result ->
+                    CitationRow(
+                        index = index + 1,
+                        result = result,
+                        contentColor = contentColor,
+                        onClick = {
+                            runCatching { uriHandler.openUri(result.url) }
+                        }
+                    )
+                    if (index < minOf(displayResults.size, 5) - 1) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 4.dp),
+                            color = contentColor.copy(alpha = 0.12f)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CitationRow(
+    index: Int,
+    result: WebSearchResult,
+    contentColor: androidx.compose.ui.graphics.Color,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 6.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Surface(
+            shape = RoundedCornerShape(6.dp),
+            color = contentColor.copy(alpha = 0.15f)
+        ) {
+            Text(
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                text = index.toString(),
+                style = MaterialTheme.typography.labelSmall,
+                color = contentColor,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+        Spacer(modifier = Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = result.title,
+                style = MaterialTheme.typography.bodySmall,
+                color = contentColor,
+                fontWeight = FontWeight.Medium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (result.snippet.isNotBlank()) {
+                Text(
+                    text = result.snippet,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = contentColor.copy(alpha = 0.75f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    modifier = Modifier.size(12.dp),
+                    imageVector = Icons.Rounded.Link,
+                    contentDescription = null,
+                    tint = contentColor.copy(alpha = 0.7f)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = displayLinkText(result.url),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = contentColor.copy(alpha = 0.7f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textDecoration = TextDecoration.Underline
+                )
+            }
+        }
     }
 }
 
@@ -503,11 +754,7 @@ private fun ChatMessageBubble(
     val isUser = message.role == "user"
     val clipboardManager = LocalClipboardManager.current
     val visibleText = remember(message.content, isUser) {
-        if (isUser) {
-            message.content
-        } else {
-            cleanAssistantAnswer(message.content)
-        }
+        if (isUser) message.content else cleanAssistantAnswer(message.content)
     }
     var actionDialog by rememberSaveable(message.id) { mutableStateOf<MessageActionDialog?>(null) }
     var editDialogOpen by rememberSaveable(message.id) { mutableStateOf(false) }
@@ -524,7 +771,7 @@ private fun ChatMessageBubble(
                     modifier = Modifier.fillMaxWidth(),
                     color = MaterialTheme.colorScheme.primaryContainer,
                     contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    shape = RoundedCornerShape(8.dp)
+                    shape = RoundedCornerShape(20.dp, 20.dp, 4.dp, 20.dp)
                 ) {
                     Column(modifier = Modifier.padding(14.dp)) {
                         Text(text = message.content, style = MaterialTheme.typography.bodyMedium)
@@ -543,7 +790,7 @@ private fun ChatMessageBubble(
                     modifier = Modifier.fillMaxWidth(),
                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
                     contentColor = MaterialTheme.colorScheme.onSurface,
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(20.dp, 20.dp, 20.dp, 4.dp),
                     tonalElevation = 1.dp
                 ) {
                     Column(modifier = Modifier.padding(14.dp)) {
@@ -856,7 +1103,7 @@ private fun MessageRetryDialog(
 
 @Composable
 private fun MessageActionRow(
-    icon: ImageVector,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
     title: String,
     description: String,
     enabled: Boolean = true,
@@ -870,7 +1117,7 @@ private fun MessageActionRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(12.dp))
             .clickable(enabled = enabled, onClick = onClick)
             .padding(10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -927,7 +1174,7 @@ private fun ThinkBlockView(
     Surface(
         modifier = modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surfaceContainerLow,
-        shape = RoundedCornerShape(12.dp)
+        shape = RoundedCornerShape(16.dp)
     ) {
         Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
             Row(
@@ -963,13 +1210,19 @@ private fun ThinkBlockView(
                     )
                 }
             }
-            if (expanded || isThinking) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = block.content,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            AnimatedVisibility(
+                visible = expanded || isThinking,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                Column {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = block.content,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     }
@@ -1049,6 +1302,24 @@ private fun ChatInputBar(
                     },
                     label = { Text("联网搜索") }
                 )
+                if (searchSettings.aiAutoSearch) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    AssistChip(
+                        onClick = { searchSettingsOpen = true },
+                        label = { Text("AI 自主") },
+                        leadingIcon = {
+                            Icon(
+                                modifier = Modifier.size(16.dp),
+                                imageVector = Icons.Rounded.AutoAwesome,
+                                contentDescription = null
+                            )
+                        },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                            labelColor = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                    )
+                }
                 Spacer(modifier = Modifier.weight(1f))
                 IconButton(onClick = { searchSettingsOpen = true }) {
                     Icon(
@@ -1103,6 +1374,111 @@ private fun ChatInputBar(
     }
 }
 
+/**
+ * 人格切换对话框：在 AI 对话页快速切换或停用人格面具。
+ */
+@Composable
+private fun PersonaSwitchDialog(
+    personas: List<AiPersona>,
+    activePersonaId: String?,
+    onDismiss: () -> Unit,
+    onSelect: (String?) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("切换人格面具") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 480.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                if (personas.isEmpty()) {
+                    Text(
+                        text = "尚未创建任何人格面具。请到「设置 → AI 设置 → 人格面具管理」新建。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    PersonaOptionRow(
+                        title = "默认（无人格）",
+                        description = "不注入任何人格设定",
+                        selected = activePersonaId.isNullOrBlank(),
+                        onClick = { onSelect(null) }
+                    )
+                    personas.forEach { persona ->
+                        PersonaOptionRow(
+                            title = persona.name.ifBlank { "未命名人格" },
+                            description = listOfNotNull(
+                                persona.profession.takeIf { it.isNotBlank() },
+                                persona.bio.takeIf { it.isNotBlank() }
+                            ).joinToString(" · "),
+                            selected = persona.id == activePersonaId,
+                            onClick = { onSelect(persona.id) }
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("关闭")
+            }
+        }
+    )
+}
+
+@Composable
+private fun PersonaOptionRow(
+    title: String,
+    description: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val container = if (selected) {
+        MaterialTheme.colorScheme.secondaryContainer
+    } else {
+        MaterialTheme.colorScheme.surfaceContainerHigh
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(container)
+            .clickable(onClick = onClick)
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.Face,
+            contentDescription = null,
+            tint = if (selected) MaterialTheme.colorScheme.onSecondaryContainer
+            else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer
+                else MaterialTheme.colorScheme.onSurface
+            )
+            if (description.isNotBlank()) {
+                Text(
+                    text = description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun SearchSettingsDialog(
     settings: AiSearchSettings,
@@ -1116,7 +1492,7 @@ private fun SearchSettingsDialog(
         text = {
             Column(
                 modifier = Modifier
-                    .heightIn(max = 520.dp)
+                    .heightIn(max = 560.dp)
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
@@ -1124,10 +1500,60 @@ private fun SearchSettingsDialog(
                     text = "搜索引擎",
                     style = MaterialTheme.typography.labelLarge
                 )
-                SearchEngineChips(
-                    value = draft.engine,
-                    onChange = { draft = draft.copy(engine = it) }
+                SearchEngineProviderChips(
+                    value = draft.provider,
+                    onChange = { draft = draft.copy(provider = it) }
                 )
+                // Tavily Key 配置
+                if (draft.provider == AiSearchEngineProvider.TAVILY || draft.provider == AiSearchEngineProvider.AUTO) {
+                    OutlinedTextField(
+                        modifier = Modifier.fillMaxWidth(),
+                        value = draft.tavilyApiKey,
+                        onValueChange = { draft = draft.copy(tavilyApiKey = it) },
+                        label = { Text("Tavily API Key（可选）") },
+                        placeholder = { Text("tvly-xxxxxx") },
+                        singleLine = true,
+                        supportingText = {
+                            Text(
+                                if (draft.provider == AiSearchEngineProvider.TAVILY && draft.tavilyApiKey.isBlank())
+                                    "Tavily 需要填写 Key 才能使用"
+                                else "留空则回退到其他引擎"
+                            )
+                        }
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            modifier = Modifier.weight(1f),
+                            text = "搜索深度：${if (draft.tavilySearchDepth == "advanced") "深度" else "基础"}",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Switch(
+                            checked = draft.tavilySearchDepth == "advanced",
+                            onCheckedChange = {
+                                draft = draft.copy(tavilySearchDepth = if (it) "advanced" else "basic")
+                            }
+                        )
+                    }
+                }
+                // AI 自主搜索开启
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "AI 自主决策搜索",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Text(
+                            text = "检测到时间敏感词时自动联网",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = draft.aiAutoSearch,
+                        onCheckedChange = { draft = draft.copy(aiAutoSearch = it) }
+                    )
+                }
+                HorizontalDivider()
                 Text(
                     text = "搜索条数：${draft.resultCount}",
                     style = MaterialTheme.typography.labelLarge
@@ -1140,11 +1566,12 @@ private fun SearchSettingsDialog(
                     valueRange = 1f..10f,
                     steps = 8
                 )
+                // SearXNG 配置
                 OutlinedTextField(
                     modifier = Modifier.fillMaxWidth(),
                     value = draft.searxngBaseUrl,
                     onValueChange = { draft = draft.copy(searxngBaseUrl = it) },
-                    label = { Text("SearXNG 地址") },
+                    label = { Text("SearXNG 地址（可选）") },
                     placeholder = { Text("https://search.example.com") },
                     singleLine = true
                 )
@@ -1180,34 +1607,39 @@ private fun SearchSettingsDialog(
 }
 
 @Composable
-private fun SearchEngineChips(
-    value: AiSearchEngine,
-    onChange: (AiSearchEngine) -> Unit
+private fun SearchEngineProviderChips(
+    value: AiSearchEngineProvider,
+    onChange: (AiSearchEngineProvider) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(AiSearchEngine.AUTO, AiSearchEngine.BING, AiSearchEngine.SOGOU).forEach {
-                SearchEngineChip(engine = it, selected = value == it, onChange = onChange)
-            }
+            listOf(
+                AiSearchEngineProvider.AUTO,
+                AiSearchEngineProvider.TAVILY,
+                AiSearchEngineProvider.DUCKDUCKGO
+            ).forEach { SearchEngineProviderChip(it, value == it, onChange) }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(AiSearchEngine.BAIDU, AiSearchEngine.SEARXNG).forEach {
-                SearchEngineChip(engine = it, selected = value == it, onChange = onChange)
-            }
+            listOf(
+                AiSearchEngineProvider.BING,
+                AiSearchEngineProvider.SOGOU,
+                AiSearchEngineProvider.BAIDU,
+                AiSearchEngineProvider.SEARXNG
+            ).forEach { SearchEngineProviderChip(it, value == it, onChange) }
         }
     }
 }
 
 @Composable
-private fun SearchEngineChip(
-    engine: AiSearchEngine,
+private fun SearchEngineProviderChip(
+    provider: AiSearchEngineProvider,
     selected: Boolean,
-    onChange: (AiSearchEngine) -> Unit
+    onChange: (AiSearchEngineProvider) -> Unit
 ) {
     FilterChip(
         selected = selected,
-        onClick = { onChange(engine) },
-        label = { Text(engine.label) }
+        onClick = { onChange(provider) },
+        label = { Text(provider.label) }
     )
 }
 
@@ -1349,7 +1781,7 @@ private fun CodeBlock(code: String) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surfaceContainerLow)
             .padding(10.dp)
     ) {
@@ -1444,8 +1876,8 @@ private fun inlineMarkdown(text: String) = buildAnnotatedString {
 private const val LINK_TAG = "URL"
 private val MARKDOWN_LINK_REGEX = Regex("""\[([^\]]+)]\(((?:https?://|www\.)[^)\s]+)\)""")
 private val RAW_URL_REGEX = Regex("""(?:https?://|www\.)[^\s<>()]+""")
-private const val THINK_OPEN = "<think>"
-private const val THINK_CLOSE = "</think>"
+private const val THINK_OPEN_TAG = "<" + "think" + ">"
+private const val THINK_CLOSE_TAG = "</" + "think" + ">"
 
 private fun normalizeLinkUrl(url: String): String {
     val trimmed = url.trim()
@@ -1467,22 +1899,22 @@ private fun displayLinkText(url: String): String {
 private fun cleanAssistantAnswer(content: String): String {
     var result = content
     while (true) {
-        val open = result.indexOf(THINK_OPEN)
+        val open = result.indexOf(THINK_OPEN_TAG)
         if (open < 0) break
-        val close = result.indexOf(THINK_CLOSE, startIndex = open + THINK_OPEN.length)
+        val close = result.indexOf(THINK_CLOSE_TAG, startIndex = open + THINK_OPEN_TAG.length)
         result = if (close >= 0) {
-            result.removeRange(open, close + THINK_CLOSE.length)
+            result.removeRange(open, close + THINK_CLOSE_TAG.length)
         } else {
             result.substring(0, open)
         }
     }
-    val strayClose = result.indexOf(THINK_CLOSE)
+    val strayClose = result.indexOf(THINK_CLOSE_TAG)
     if (strayClose >= 0) {
-        result = result.substring(strayClose + THINK_CLOSE.length)
+        result = result.substring(strayClose + THINK_CLOSE_TAG.length)
     }
     return result
-        .replace(THINK_OPEN, "")
-        .replace(THINK_CLOSE, "")
+        .replace(THINK_OPEN_TAG, "")
+        .replace(THINK_CLOSE_TAG, "")
         .trim()
 }
 
@@ -1500,28 +1932,28 @@ fun parseThinkContent(content: String): ParsedThinkContent {
     var remaining = content
 
     while (true) {
-        val open = remaining.indexOf(THINK_OPEN)
+        val open = remaining.indexOf(THINK_OPEN_TAG)
         if (open < 0) {
             answer.append(remaining)
             break
         }
-        val thinkStart = open + THINK_OPEN.length
-        val close = remaining.indexOf(THINK_CLOSE, thinkStart)
+        val thinkStart = open + THINK_OPEN_TAG.length
+        val close = remaining.indexOf(THINK_CLOSE_TAG, thinkStart)
         if (close < 0) {
             // 未闭合：思考进行中，把 open 之前的内容加入正文，思考内容放入块
             answer.append(remaining.substring(0, open))
             blocks.add(ThinkBlockContent(remaining.substring(thinkStart)))
             return ParsedThinkContent(blocks, answer.toString().trim(), isThinking = true)
         }
-        val nextOpen = remaining.indexOf(THINK_OPEN, thinkStart)
+        val nextOpen = remaining.indexOf(THINK_OPEN_TAG, thinkStart)
         if (nextOpen in 0 until close) {
             // 嵌套 open 视为不闭合：去除所有 think 标签后作为普通正文
-            answer.append(remaining.replace(THINK_OPEN, "").replace(THINK_CLOSE, ""))
+            answer.append(remaining.replace(THINK_OPEN_TAG, "").replace(THINK_CLOSE_TAG, ""))
             break
         }
         answer.append(remaining.substring(0, open))
         blocks.add(ThinkBlockContent(remaining.substring(thinkStart, close)))
-        remaining = remaining.substring(close + THINK_CLOSE.length)
+        remaining = remaining.substring(close + THINK_CLOSE_TAG.length)
     }
 
     return ParsedThinkContent(blocks, answer.toString().trim(), isThinking = false)

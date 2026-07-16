@@ -41,6 +41,8 @@ import com.par9uet.jm.ui.components.adaptiveComicGridCells
 import com.par9uet.jm.ui.viewModel.ComicDetailViewModel
 import com.par9uet.jm.ui.viewModel.ComicViewModel
 import com.par9uet.jm.utils.serializeExcludedTags
+import com.par9uet.jm.store.LocalSettingManager
+import org.koin.compose.getKoin
 import org.koin.compose.viewmodel.koinActivityViewModel
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -67,8 +69,10 @@ private fun ComicSearchResultSkeleton(
 fun ComicSearchResultScreen(
     comicViewModel: ComicViewModel = koinActivityViewModel(),
     comicDetailViewModel: ComicDetailViewModel = koinActivityViewModel(),
+    localSettingManager: LocalSettingManager = getKoin().get(),
 ) {
     val mainNavController = LocalMainNavController.current
+    val localSetting by localSettingManager.localSettingState.collectAsState()
     val comicSearchLazyPagingItems = comicViewModel.searchComicPager.collectAsLazyPagingItems()
     val comicSearchFilterState by comicViewModel.searchComicFilterState.collectAsState()
     val searchComicIdState by comicViewModel.searchComicIdState.collectAsState()
@@ -158,7 +162,7 @@ fun ComicSearchResultScreen(
                 modifier = Modifier.weight(1f),
                 lazyPagingItems = comicSearchLazyPagingItems,
                 key = { it.id },
-                columns = adaptiveComicGridCells(),
+                columns = adaptiveComicGridCells(localSetting.searchGridColumns),
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp)
             ) {
                 Comic(it)

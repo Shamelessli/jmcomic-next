@@ -1,7 +1,8 @@
 package com.par9uet.jm.utils
 
-import java.time.LocalDateTime
-import java.time.format.DateTimeFormatter
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 data class LogEntry(
     val timestamp: String,
@@ -15,11 +16,12 @@ data class LogEntry(
 object LogBuffer {
     private const val MAX_ENTRIES = 500
     private val entries = mutableListOf<LogEntry>()
-    private val dateFormatter = DateTimeFormatter.ofPattern("MM-dd HH:mm:ss")
+    // 使用 SimpleDateFormat 替代 java.time，确保 Android 6 兼容性
+    private val dateFormatter = SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault())
 
     @Synchronized
     fun append(tag: String, message: String, level: String = "D") {
-        val time = LocalDateTime.now().format(dateFormatter)
+        val time = dateFormatter.format(Date())
         entries.add(LogEntry(time, tag, message, level))
         if (entries.size > MAX_ENTRIES) {
             entries.removeAt(0)

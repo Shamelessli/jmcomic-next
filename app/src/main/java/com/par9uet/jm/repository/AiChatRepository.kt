@@ -4,6 +4,7 @@ import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.par9uet.jm.data.models.AiSearchEngine
+import com.par9uet.jm.data.models.AiSearchEngineProvider
 import com.par9uet.jm.data.models.AiSearchSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -19,6 +20,41 @@ import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
+/**
+ * 联网搜索结构化结果项：用于 UI 引用卡片展示与上下文拼接。
+ */
+data class WebSearchResult(
+    val title: String,
+    val snippet: String,
+    val url: String
+)
+
+/**
+ * 联网搜索产物：拼接好的上下文字符串 + 结构化结果列表。
+ */
+data class WebSearchContext(
+    val text: String,
+    val results: List<WebSearchResult>
+) {
+    companion object {
+        val EMPTY = WebSearchContext(text = "", results = emptyList())
+    }
+}
+
+/**
+ * 搜索进度阶段：用于 UI 可视化（类似 Lobe Chat）。
+ */
+sealed class SearchProgress {
+    /** 开始搜索：携带最终查询词 */
+    data class Start(val query: String) : SearchProgress()
+    /** 找到 N 条结果 */
+    data class Found(val count: Int, val results: List<WebSearchResult>) : SearchProgress()
+    /** 完成上下文构建 */
+    data class Done(val context: WebSearchContext) : SearchProgress()
+    /** 失败：携带错误信息（不抛异常，由调用方决定如何呈现） */
+    data class Failed(val message: String) : SearchProgress()
+}
+
 class AiChatRepository(
     private val gson: Gson
 ) {
@@ -28,6 +64,28 @@ class AiChatRepository(
         private const val COOKIES = ""
         const val THINK_OPEN = "\u003Cthink\u003E"
         const val THINK_CLOSE = "\u003C/think\u003E"
+
+        private const val TAVILY_ENDPOINT = "https://api.tavily.com/search"
+        private const val DUCKDUCKGO_ENDPOINT = "https://html.duckduckgo.com/html/"
+
+        /**
+         * 触发 AI 自主联网搜索的关键词集合。
+         * 当 [AiSearchSettings.aiAutoSearch] 为 true 且用户消息命中任一关键词时，自动联网。
+         */
+        private val AUTO_SEARCH_KEYWORDS = listOf(
+            "最新", "今天", "现在", "目前", "当前", "近期", "最近",
+            "新闻", "新闻联播", "时讯", "时事",
+            "2024", "2025", "2026", "2027",
+            "价格", "股价", "汇率", "金价", "油价", "行情",
+            "版本", "发布", "更新", "升级", "Release",
+            "政策", "法规", "法案", "新规",
+            "比赛", "赛果", "比分", "战报", "战绩",
+            "天气", "气温", "降水",
+            "职位", "任职", "担任", "辞去",
+            "逝世", "去世", "去世了", "出生",
+            "票房", "收视率", "排名", "榜单",
+            "公告", "通知", "声明", "公报"
+        )
     }
 
     private val client = OkHttpClient.Builder()
@@ -36,72 +94,228 @@ class AiChatRepository(
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
+    private val searchClient = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .writeTimeout(15, TimeUnit.SECONDS)
+        .build()
+
+    /**
+     * 判断用户消息是否应该触发联网搜索（AI 自主决策）。
+     *
+     * 规则：
+     * - [manualEnabled] 用户手动开启联网搜索 -> true
+     * - [settings.aiAutoSearch] 关闭 -> false
+     * - 命中 [AUTO_SEARCH_KEYWORDS] 任一关键词 -> true
+     * - 否则 false
+     */
+    fun shouldAutoSearch(text: String, manualEnabled: Boolean, settings: AiSearchSettings): Boolean {
+        if (manualEnabled) return true
+        if (!settings.aiAutoSearch) return false
+        val normalized = text.trim().lowercase()
+        if (normalized.isBlank()) return false
+        return AUTO_SEARCH_KEYWORDS.any { keyword ->
+            normalized.contains(keyword.lowercase())
+        }
+    }
+
+    /**
+     * 联网搜索（带进度回调）：类似 Lobe Chat，过程可视化。
+     *
+     * 调用方通过 [onProgress] 接收 4 个阶段：Start → Found → Done（或 Failed）。
+     * 失败时不抛异常，由调用方根据 [SearchProgress.Failed] 决定后续行为。
+     */
+    suspend fun searchWebContextWithProgress(
+        query: String,
+        settings: AiSearchSettings,
+        onProgress: suspend (SearchProgress) -> Unit
+    ): WebSearchContext = withContext(Dispatchers.IO) {
+        if (query.isBlank()) {
+            onProgress(SearchProgress.Failed("查询为空"))
+            return@withContext WebSearchContext.EMPTY
+        }
+        val normalized = settings.normalized()
+        onProgress(SearchProgress.Start(query))
+
+        val results = runCatching { searchByProvider(query, normalized) }
+            .getOrElse {
+                onProgress(SearchProgress.Failed(it.message ?: "搜索失败"))
+                return@withContext WebSearchContext.EMPTY
+            }
+
+        if (results.isEmpty()) {
+            onProgress(SearchProgress.Failed("未找到可用结果"))
+            return@withContext WebSearchContext.EMPTY
+        }
+
+        onProgress(SearchProgress.Found(results.size, results))
+        val context = buildContextFromResults(query, results)
+        onProgress(SearchProgress.Done(context))
+        context
+    }
+
+    /**
+     * 兼容旧调用方：无进度回调的搜索接口。
+     */
     suspend fun searchWebContext(
         query: String,
         settings: AiSearchSettings
-    ): String? = withContext(Dispatchers.IO) {
-        val normalized = settings.normalized()
-        val providers = when (normalized.engine) {
-            AiSearchEngine.AUTO -> listOf(
-                { searchSearxngContext(query, normalized) },
-                { searchBingContext(query, normalized.resultCount) },
-                { searchSogouContext(query, normalized.resultCount) },
-                { searchBaiduContext(query, normalized.resultCount) }
-            )
-            AiSearchEngine.BING -> listOf({ searchBingContext(query, normalized.resultCount) })
-            AiSearchEngine.SOGOU -> listOf({ searchSogouContext(query, normalized.resultCount) })
-            AiSearchEngine.BAIDU -> listOf({ searchBaiduContext(query, normalized.resultCount) })
-            AiSearchEngine.SEARXNG -> listOf({ searchSearxngContext(query, normalized) })
-        }
-        providers.firstNotNullOfOrNull { provider ->
-            runCatching { provider() }.getOrNull()
+    ): String? {
+        val context = searchWebContextWithProgress(query, settings) { /* no-op */ }
+        return context.takeIf { it.text.isNotBlank() }?.text
+    }
+
+    private suspend fun searchByProvider(
+        query: String,
+        settings: AiSearchSettings
+    ): List<WebSearchResult> {
+        return when (settings.provider) {
+            AiSearchEngineProvider.TAVILY -> {
+                if (settings.tavilyReady) searchTavily(query, settings)
+                else emptyList()
+            }
+            AiSearchEngineProvider.DUCKDUCKGO -> searchDuckDuckGo(query, settings.resultCount)
+            AiSearchEngineProvider.BING -> parseBing(fetchSearchPage(bingUrl(query)) ?: "", settings.resultCount)
+            AiSearchEngineProvider.SOGOU -> parseSogou(fetchSearchPage(sogouUrl(query)) ?: "", settings.resultCount)
+            AiSearchEngineProvider.BAIDU -> parseBaidu(fetchSearchPage(baiduUrl(query, settings.resultCount)) ?: "", settings.resultCount)
+            AiSearchEngineProvider.SEARXNG -> parseSearxng(fetchSearchPage(searxngUrl(query, settings)) ?: "", settings.resultCount)
+            AiSearchEngineProvider.AUTO -> {
+                // 自动模式：按可用性顺序尝试
+                if (settings.tavilyReady) {
+                    searchTavily(query, settings).takeIf { it.isNotEmpty() }
+                        ?: searchDuckDuckGo(query, settings.resultCount).takeIf { it.isNotEmpty() }
+                        ?: parseBing(fetchSearchPage(bingUrl(query)) ?: "", settings.resultCount).takeIf { it.isNotEmpty() }
+                        ?: parseSogou(fetchSearchPage(sogouUrl(query)) ?: "", settings.resultCount).takeIf { it.isNotEmpty() }
+                        ?: parseBaidu(fetchSearchPage(baiduUrl(query, settings.resultCount)) ?: "", settings.resultCount)
+                } else {
+                    searchDuckDuckGo(query, settings.resultCount).takeIf { it.isNotEmpty() }
+                        ?: parseBing(fetchSearchPage(bingUrl(query)) ?: "", settings.resultCount).takeIf { it.isNotEmpty() }
+                        ?: parseSogou(fetchSearchPage(sogouUrl(query)) ?: "", settings.resultCount).takeIf { it.isNotEmpty() }
+                        ?: parseBaidu(fetchSearchPage(baiduUrl(query, settings.resultCount)) ?: "", settings.resultCount)
+                }
+            }
         }
     }
 
-    private fun searchBingContext(query: String, resultCount: Int): String? {
-        val url = "https://cn.bing.com/search".toHttpUrl().newBuilder()
+    // ============== Tavily ==============
+
+    private fun searchTavily(query: String, settings: AiSearchSettings): List<WebSearchResult> {
+        val payload = JsonObject().apply {
+            addProperty("api_key", settings.tavilyApiKey)
+            addProperty("query", query)
+            addProperty("search_depth", settings.tavilySearchDepth)
+            addProperty("max_results", settings.resultCount)
+            addProperty("include_answer", "basic")
+            addProperty("include_raw_content", false)
+        }
+        val body = gson.toJson(payload).toRequestBody("application/json".toMediaType())
+        val request = Request.Builder()
+            .url(TAVILY_ENDPOINT)
+            .header("accept", "application/json")
+            .header("content-type", "application/json")
+            .post(body)
+            .build()
+        return searchClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return@use emptyList()
+            val text = response.body?.string() ?: return@use emptyList()
+            val root = runCatching { JsonParser.parseString(text).asJsonObject }.getOrNull() ?: return@use emptyList()
+            val results = root.getAsJsonArray("results") ?: return@use emptyList()
+            results.mapNotNull { element ->
+                if (!element.isJsonObject) return@mapNotNull null
+                val obj = element.asJsonObject
+                val title = obj.stringValue("title").orEmpty().stripHtml()
+                val url = obj.stringValue("url").orEmpty().trim()
+                val content = obj.stringValue("content").orEmpty().stripHtml().take(280)
+                if (url.isBlank() || title.isBlank()) null
+                else WebSearchResult(title = title, snippet = content, url = url)
+            }.distinctBy { it.url }.take(settings.resultCount)
+        }
+    }
+
+    // ============== DuckDuckGo ==============
+
+    private fun searchDuckDuckGo(query: String, resultCount: Int): List<WebSearchResult> {
+        val url = DUCKDUCKGO_ENDPOINT.toHttpUrl().newBuilder()
+            .addQueryParameter("q", query)
+            .addQueryParameter("kl", "cn-zh")
+            .build()
+        val html = fetchSearchPage(
+            url = url.toString(),
+            accept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        ) ?: return emptyList()
+        return parseDuckDuckGo(html, resultCount)
+    }
+
+    private fun parseDuckDuckGo(html: String, resultCount: Int): List<WebSearchResult> {
+        // DuckDuckGo HTML 版结果块：<a class="result__a" href="...">title</a>
+        // 摘要：<a class="result__snippet">...</a>
+        val linkRegex = Regex(
+            """<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)</a>""",
+            RegexOption.IGNORE_CASE
+        )
+        val snippetRegex = Regex(
+            """<a[^>]+class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)</a>""",
+            RegexOption.IGNORE_CASE
+        )
+        val results = linkRegex.findAll(html).mapNotNull { match ->
+            val rawUrl = match.groupValues[1].decodeHtml().trim()
+            val title = match.groupValues[2].stripHtml()
+            // DuckDuckGo 的跳转链接形如 //duckduckgo.com/l/?uddg=<encoded>
+            val resolved = resolveDdgRedirect(rawUrl)
+            if (resolved.isBlank() || title.isBlank()) return@mapNotNull null
+            // 在链接附近找摘要
+            val tail = html.substring(match.range.last, minOf(html.length, match.range.last + 800))
+            val snippet = snippetRegex.find(tail)?.groupValues?.get(1)?.stripHtml().orEmpty()
+            WebSearchResult(title = title, snippet = snippet, url = resolved)
+        }.distinctBy { it.url }.take(resultCount).toList()
+        return results
+    }
+
+    private fun resolveDdgRedirect(url: String): String {
+        if (url.startsWith("http://") || url.startsWith("https://")) return url
+        if (url.startsWith("//")) return "https:$url"
+        // 解析 uddg= 参数
+        val match = Regex("""uddg=([^&]+)""").find(url) ?: return url
+        return runCatching { java.net.URLDecoder.decode(match.groupValues[1], "UTF-8") }.getOrDefault(url)
+    }
+
+    // ============== 传统搜索引擎 ==============
+
+    private fun bingUrl(query: String): String =
+        "https://cn.bing.com/search".toHttpUrl().newBuilder()
             .addQueryParameter("q", query)
             .addQueryParameter("setlang", "zh-CN")
             .addQueryParameter("cc", "CN")
-            .build()
-        return fetchSearchPage(url.toString())?.toBingSearchContext(resultCount)
-    }
+            .build().toString()
 
-    private fun searchSogouContext(query: String, resultCount: Int): String? {
-        val url = "https://www.sogou.com/web".toHttpUrl().newBuilder()
+    private fun sogouUrl(query: String): String =
+        "https://www.sogou.com/web".toHttpUrl().newBuilder()
             .addQueryParameter("query", query)
             .addQueryParameter("ie", "utf8")
-            .build()
-        return fetchSearchPage(url.toString())?.toSogouSearchContext(resultCount)
-    }
+            .build().toString()
 
-    private fun searchBaiduContext(query: String, resultCount: Int): String? {
-        val url = "https://www.baidu.com/s".toHttpUrl().newBuilder()
+    private fun baiduUrl(query: String, resultCount: Int): String =
+        "https://www.baidu.com/s".toHttpUrl().newBuilder()
             .addQueryParameter("wd", query)
             .addQueryParameter("rn", resultCount.toString())
             .addQueryParameter("ie", "utf-8")
-            .build()
-        return fetchSearchPage(url.toString())?.toBaiduSearchContext(resultCount)
-    }
+            .build().toString()
 
-    private fun searchSearxngContext(query: String, settings: AiSearchSettings): String? {
-        val endpoint = settings.searxngBaseUrl.toSearxngSearchEndpoint() ?: return null
-        val url = endpoint.toHttpUrl().newBuilder()
+    private fun searxngUrl(query: String, settings: AiSearchSettings): String {
+        val endpoint = settings.searxngBaseUrl.toSearxngSearchEndpoint() ?: return ""
+        return endpoint.toHttpUrl().newBuilder()
             .addQueryParameter("q", query)
             .addQueryParameter("format", "json")
             .addQueryParameter("language", settings.searxngLanguage)
             .addQueryParameter("categories", settings.searxngCategories)
-            .build()
-        return fetchSearchPage(
-            url = url.toString(),
-            accept = "application/json,text/plain,*/*"
-        )?.toSearxngSearchContext(settings.resultCount)
+            .build().toString()
     }
 
     private fun fetchSearchPage(
         url: String,
         accept: String = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
     ): String? {
+        if (url.isBlank()) return null
         val request = Request.Builder()
             .url(url)
             .header("accept", accept)
@@ -112,11 +326,92 @@ class AiChatRepository(
             )
             .get()
             .build()
-        return client.newCall(request).execute().use { response ->
+        return searchClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return@use null
             response.body?.string()
         }
     }
+
+    private fun parseBing(html: String, resultCount: Int): List<WebSearchResult> {
+        val blockRegex = Regex("""<li\s+class="b_algo"[\s\S]*?</li>""", RegexOption.IGNORE_CASE)
+        val linkRegex = Regex("""<h2[^>]*>[\s\S]*?<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)</a>""", RegexOption.IGNORE_CASE)
+        val snippetRegex = Regex("""<p[^>]*>([\s\S]*?)</p>""", RegexOption.IGNORE_CASE)
+        return blockRegex.findAll(html).mapNotNull { block ->
+            val link = linkRegex.find(block.value) ?: return@mapNotNull null
+            val url = link.groupValues[1].decodeHtml().trim()
+            val title = link.groupValues[2].stripHtml()
+            val snippet = snippetRegex.find(block.value)?.groupValues?.get(1)?.stripHtml().orEmpty()
+            if (url.isBlank() || title.isBlank()) return@mapNotNull null
+            WebSearchResult(title = title, snippet = snippet, url = url)
+        }.distinctBy { it.url }.take(resultCount).toList()
+    }
+
+    private fun parseSogou(html: String, resultCount: Int): List<WebSearchResult> {
+        val linkRegex = Regex(
+            """<h3[^>]*>[\s\S]*?<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)</a>[\s\S]*?</h3>""",
+            RegexOption.IGNORE_CASE
+        )
+        return linkRegex.findAll(html).mapNotNull { match ->
+            val url = match.groupValues[1].decodeHtml().trim()
+            val title = match.groupValues[2].stripHtml()
+            val blockEnd = minOf(html.length, match.range.last + 520)
+            val text = html.substring(match.range.first, blockEnd)
+                .stripHtml()
+                .removePrefix(title)
+                .replace(Regex("""\s+"""), " ")
+                .trim()
+                .take(180)
+            if (!url.startsWith("http") || title.isBlank()) return@mapNotNull null
+            WebSearchResult(title = title, snippet = text, url = url)
+        }.distinctBy { it.url }.take(resultCount).toList()
+    }
+
+    private fun parseBaidu(html: String, resultCount: Int): List<WebSearchResult> {
+        val blockRegex = Regex(
+            """<div[^>]+class="[^"]*(?:result|c-container)[^"]*"[\s\S]*?(?=<div[^>]+class="[^"]*(?:result|c-container)|$)""",
+            RegexOption.IGNORE_CASE
+        )
+        val linkRegex = Regex(
+            """<h3[^>]*>[\s\S]*?<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)</a>[\s\S]*?</h3>""",
+            RegexOption.IGNORE_CASE
+        )
+        return blockRegex.findAll(html).mapNotNull { block ->
+            val link = linkRegex.find(block.value) ?: return@mapNotNull null
+            val url = link.groupValues[1].decodeHtml().trim()
+            val title = link.groupValues[2].stripHtml()
+            val text = block.value.stripHtml()
+                .removePrefix(title)
+                .replace(Regex("""\s+"""), " ")
+                .trim()
+                .take(180)
+            if (url.isBlank() || title.isBlank()) return@mapNotNull null
+            WebSearchResult(title = title, snippet = text, url = url)
+        }.distinctBy { it.url }.take(resultCount).toList()
+    }
+
+    private fun parseSearxng(html: String, resultCount: Int): List<WebSearchResult> {
+        val root = runCatching { JsonParser.parseString(html).asJsonObject }.getOrNull() ?: return emptyList()
+        val results = root.getAsJsonArray("results") ?: return emptyList()
+        return results.mapNotNull { element ->
+            if (!element.isJsonObject) return@mapNotNull null
+            val item = element.asJsonObject
+            val title = item.stringValue("title").orEmpty().stripHtml()
+            val url = item.stringValue("url").orEmpty().trim()
+            val text = item.stringValue("content").orEmpty().stripHtml().take(180)
+            if (!url.startsWith("http") || title.isBlank()) return@mapNotNull null
+            WebSearchResult(title = title, snippet = text, url = url)
+        }.distinctBy { it.url }.take(resultCount).toList()
+    }
+
+    private fun buildContextFromResults(query: String, results: List<WebSearchResult>): WebSearchContext {
+        val text = results.mapIndexed { index, item ->
+            val snippet = if (item.snippet.isBlank()) "" else " - ${item.snippet}"
+            "${index + 1}. ${item.title}$snippet 来源：${item.url}"
+        }.joinToString("\n")
+        return WebSearchContext(text = text, results = results)
+    }
+
+    // ============== AI 流式对话 ==============
 
     suspend fun streamChat(
         messages: List<OpenAiChatMessage>,
@@ -225,123 +520,6 @@ data class OpenAiChatMessage(
     val role: String,
     val content: String
 )
-
-private data class SearchItem(
-    val title: String,
-    val text: String,
-    val url: String
-)
-
-private fun String.toBingSearchContext(resultCount: Int): String? {
-    val blockRegex = Regex("""<li\s+class="b_algo"[\s\S]*?</li>""", RegexOption.IGNORE_CASE)
-    val linkRegex = Regex("""<h2[^>]*>[\s\S]*?<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)</a>""", RegexOption.IGNORE_CASE)
-    val snippetRegex = Regex("""<p[^>]*>([\s\S]*?)</p>""", RegexOption.IGNORE_CASE)
-    val results = blockRegex.findAll(this)
-        .mapNotNull { block ->
-            val link = linkRegex.find(block.value) ?: return@mapNotNull null
-            val url = link.groupValues[1].decodeHtml().trim()
-            val title = link.groupValues[2].stripHtml()
-            val snippet = snippetRegex.find(block.value)?.groupValues?.get(1)?.stripHtml().orEmpty()
-            if (url.isBlank() || title.isBlank()) return@mapNotNull null
-            SearchItem(title = title, text = snippet, url = url)
-        }
-        .distinctBy { it.url }
-        .take(resultCount)
-        .toList()
-
-    if (results.isEmpty()) return null
-    return results.mapIndexed { index, item ->
-        val snippet = if (item.text.isBlank()) "" else " - ${item.text}"
-        "${index + 1}. ${item.title}$snippet 来源：${item.url}"
-    }.joinToString("\n")
-}
-
-private fun String.toSogouSearchContext(resultCount: Int): String? {
-    val linkRegex = Regex(
-        """<h3[^>]*>[\s\S]*?<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)</a>[\s\S]*?</h3>""",
-        RegexOption.IGNORE_CASE
-    )
-    val results = linkRegex.findAll(this)
-        .mapNotNull { match ->
-            val url = match.groupValues[1].decodeHtml().trim()
-            val title = match.groupValues[2].stripHtml()
-            val blockEnd = minOf(length, match.range.last + 520)
-            val text = substring(match.range.first, blockEnd)
-                .stripHtml()
-                .removePrefix(title)
-                .replace(Regex("""\s+"""), " ")
-                .trim()
-                .take(180)
-            if (!url.startsWith("http") || title.isBlank()) return@mapNotNull null
-            SearchItem(title = title, text = text, url = url)
-        }
-        .distinctBy { it.url }
-        .take(resultCount)
-        .toList()
-
-    if (results.isEmpty()) return null
-    return results.mapIndexed { index, item ->
-        val snippet = if (item.text.isBlank()) "" else " - ${item.text}"
-        "${index + 1}. ${item.title}$snippet 来源：${item.url}"
-    }.joinToString("\n")
-}
-
-private fun String.toBaiduSearchContext(resultCount: Int): String? {
-    val blockRegex = Regex(
-        """<div[^>]+class="[^"]*(?:result|c-container)[^"]*"[\s\S]*?(?=<div[^>]+class="[^"]*(?:result|c-container)|$)""",
-        RegexOption.IGNORE_CASE
-    )
-    val linkRegex = Regex(
-        """<h3[^>]*>[\s\S]*?<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)</a>[\s\S]*?</h3>""",
-        RegexOption.IGNORE_CASE
-    )
-    val results = blockRegex.findAll(this)
-        .mapNotNull { block ->
-            val link = linkRegex.find(block.value) ?: return@mapNotNull null
-            val url = link.groupValues[1].decodeHtml().trim()
-            val title = link.groupValues[2].stripHtml()
-            val text = block.value.stripHtml()
-                .removePrefix(title)
-                .replace(Regex("""\s+"""), " ")
-                .trim()
-                .take(180)
-            if (url.isBlank() || title.isBlank()) return@mapNotNull null
-            SearchItem(title = title, text = text, url = url)
-        }
-        .distinctBy { it.url }
-        .take(resultCount)
-        .toList()
-
-    if (results.isEmpty()) return null
-    return results.mapIndexed { index, item ->
-        val snippet = if (item.text.isBlank()) "" else " - ${item.text}"
-        "${index + 1}. ${item.title}$snippet 来源：${item.url}"
-    }.joinToString("\n")
-}
-
-private fun String.toSearxngSearchContext(resultCount: Int): String? {
-    val root = runCatching { JsonParser.parseString(this).asJsonObject }.getOrNull() ?: return null
-    val results = root.getAsJsonArray("results") ?: return null
-    val items = results
-        .mapNotNull { element ->
-            if (!element.isJsonObject) return@mapNotNull null
-            val item = element.asJsonObject
-            val title = item.stringValue("title").orEmpty().stripHtml()
-            val url = item.stringValue("url").orEmpty().trim()
-            val text = item.stringValue("content").orEmpty().stripHtml().take(180)
-            if (!url.startsWith("http") || title.isBlank()) return@mapNotNull null
-            SearchItem(title = title, text = text, url = url)
-        }
-        .distinctBy { it.url }
-        .take(resultCount)
-        .toList()
-
-    if (items.isEmpty()) return null
-    return items.mapIndexed { index, item ->
-        val snippet = if (item.text.isBlank()) "" else " - ${item.text}"
-        "${index + 1}. ${item.title}$snippet 来源：${item.url}"
-    }.joinToString("\n")
-}
 
 private fun String.stripHtml(): String {
     return replace(Regex("""<script[\s\S]*?</script>""", RegexOption.IGNORE_CASE), " ")

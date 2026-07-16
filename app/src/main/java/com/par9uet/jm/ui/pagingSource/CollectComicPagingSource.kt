@@ -60,8 +60,10 @@ class CollectComicPagingSource(
                             lowerAuthor in lowerSelectedAuthors
                         }
                     }
-                val total = data.data.total
-                val isLastPage = currentPage >= (total + params.loadSize - 1) / params.loadSize
+                // 基于服务端返回的原始数据量判断是否最后一页，避免依赖 total 字段语义不一致
+                // （JMComic 内置 API 的 total 可能返回当前页条目数而非总条目数）
+                val rawListSize = data.data.list.size
+                val isLastPage = rawListSize < params.loadSize
                 LoadResult.Page(
                     data = list,
                     prevKey = if (currentPage == 1) null else currentPage - 1,

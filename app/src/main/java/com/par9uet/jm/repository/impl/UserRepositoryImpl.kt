@@ -93,7 +93,7 @@ class UserRepositoryImpl(
                             count = favPage.totalItems(),
                             folder_list = favPage.folderList(),
                             list = listWithFullTags,
-                            total = favPage.totalPages()
+                            total = favPage.totalItems()
                         )
                     )
                 } catch (e: Exception) {

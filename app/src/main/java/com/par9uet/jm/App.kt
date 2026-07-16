@@ -12,11 +12,9 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -40,6 +38,7 @@ import com.par9uet.jm.store.ToastManager
 import com.par9uet.jm.store.UserManager
 import com.par9uet.jm.ui.screens.AppLockScreen
 import com.par9uet.jm.ui.screens.AppScreen
+import com.par9uet.jm.ui.screens.LoadingScreen
 import com.par9uet.jm.ui.screens.NsfwWarningDialog
 import com.par9uet.jm.ui.screens.WelcomeScreen
 import com.par9uet.jm.ui.viewModel.GlobalViewModel
@@ -73,6 +72,8 @@ fun App(
     var sessionNsfwDismissed by remember { mutableStateOf(false) }
     // 首次启动引导
     var showOnboarding by remember { mutableStateOf(false) }
+    // 启动加载动画（初始化期间及引导完成后显示）
+    var showLoadingScreen by remember { mutableStateOf(true) }
 
     // 本地设置初始化加载完成后再决定启动时是否锁定
     // 增加超时保护：最多等待 8 秒，避免网络初始化卡死导致永久黑屏
@@ -95,6 +96,13 @@ fun App(
             sessionNsfwDismissed = true
         }
     }
+    // 启动加载动画：设置加载完成且无需引导时，显示 2.5 秒后自动消失
+    LaunchedEffect(settingsLoaded, showOnboarding) {
+        if (settingsLoaded && !showOnboarding) {
+            kotlinx.coroutines.delay(2500L)
+            showLoadingScreen = false
+        }
+    }
     // 应用锁被关闭时解除锁定
     LaunchedEffect(localSetting.appLockEnabled) {
         if (settingsLoaded && !localSetting.appLockEnabled) isLocked = false
@@ -111,7 +119,7 @@ fun App(
         val signData = kotlinx.coroutines.withTimeoutOrNull(10000L) {
             userViewModel.signDataState.first { state -> !state.isLoading }
         } ?: return@LaunchedEffect
-        val todayDayOfMonth = java.time.LocalDate.now().dayOfMonth
+        val todayDayOfMonth = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_MONTH)
         val isSigned = signData.data?.dateMap?.get(todayDayOfMonth)?.isSign == true
         if (isSigned) return@LaunchedEffect
         userViewModel.signIn()
@@ -201,21 +209,9 @@ fun App(
         }
     }
 
-    // 设置加载前显示加载指示器，避免空白黑屏
-    if (!settingsLoaded) {
-        Surface(
-            modifier = Modifier.fillMaxSize(),
-            color = MaterialTheme.colorScheme.background
-        ) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                androidx.compose.material3.CircularProgressIndicator(
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-        }
+    // 启动加载动画：设置加载前或引导完成后的最短显示时间内显示加载页
+    if (!settingsLoaded || (showLoadingScreen && !showOnboarding)) {
+        LoadingScreen()
         return
     }
 

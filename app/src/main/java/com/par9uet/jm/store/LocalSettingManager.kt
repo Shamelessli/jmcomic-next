@@ -183,11 +183,41 @@ class LocalSettingManager(
     fun updateHistoryGridColumns(columns: Int) =
         updateSetting { it.copy(historyGridColumns = columns.coerceIn(0, 6)) }
 
+    fun updateSearchGridColumns(columns: Int) =
+        updateSetting { it.copy(searchGridColumns = columns.coerceIn(0, 6)) }
+
+    fun updateHomeExcludedTags(tags: List<String>) =
+        updateSetting { it.copy(homeExcludedTags = tags) }
+
     fun updateReadMemoryOptEnabled(enabled: Boolean) =
         updateSetting { it.copy(readMemoryOptEnabled = enabled) }
 
     fun updateReadDecodeConcurrency(concurrency: Int) =
         updateSetting { it.copy(readDecodeConcurrency = concurrency.coerceIn(1, 4)) }
+
+    /**
+     * 应用从备份恢复的 [LocalSetting]。
+     *
+     * 备份中已剥离 appLockPassword 与 appLockPattern 明文，因此恢复时保留当前设备的应用锁
+     * 相关字段（enabled/password/length/pattern/unlockMode），避免恢复后应用锁状态异常。
+     * 若恢复导致 launcherDisguise 变化，会重新应用伪装图标。
+     */
+    fun applyLocalSetting(setting: LocalSetting) {
+        val previousLauncherDisguise = _localSettingState.value.launcherDisguise
+        updateSetting { current ->
+            setting.copy(
+                appLockEnabled = current.appLockEnabled,
+                appLockPassword = current.appLockPassword,
+                appLockPasswordLength = current.appLockPasswordLength,
+                appLockPattern = current.appLockPattern,
+                appLockUnlockMode = current.appLockUnlockMode,
+            )
+        }
+        val newLauncherDisguise = _localSettingState.value.launcherDisguise
+        if (newLauncherDisguise != previousLauncherDisguise) {
+            launcherDisguiseApplier.apply(LauncherDisguise.fromId(newLauncherDisguise))
+        }
+    }
 
     private fun updateSetting(update: (LocalSetting) -> LocalSetting) {
         _localSettingState.update(update)
