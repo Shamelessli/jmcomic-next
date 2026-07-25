@@ -1,4 +1,4 @@
-﻿package com.par9uet.jm.ui.screens.readScreen
+package com.par9uet.jm.ui.screens.readScreen
 
 import android.app.Activity
 import androidx.compose.animation.AnimatedVisibility
@@ -167,8 +167,12 @@ fun ComicReadScreen(
     LaunchedEffect(comicId) {
         val onSuccess = {
             if (loadedComicId != comicId) {
-                currentIndexState = 0
-                targetIndex = 0
+                // 恢复上次阅读页数
+                val savedIndex = if (readHistoryComicId > 0) {
+                    readHistoryManager.lastReadPageIndex(readHistoryComicId, comicId, readHistory)
+                } else 0
+                currentIndexState = savedIndex
+                targetIndex = savedIndex
                 loadedComicId = comicId
             } else {
                 targetIndex = currentIndexState.coerceAtLeast(0)
@@ -186,6 +190,31 @@ fun ComicReadScreen(
                 localSettingManager.localSettingState.value.shunt,
                 onSuccess
             )
+        }
+    }
+
+    // 退出阅读时保存当前页数进度
+    DisposableEffect(comicId, size) {
+        onDispose {
+            if (size > 0 && readHistoryComicId > 0) {
+                readHistoryManager.saveReadProgress(
+                    readHistoryComicId,
+                    comicId,
+                    currentIndexState,
+                    size
+                )
+            }
+        }
+    }
+
+    // 数据加载完成后，滚动到恢复的页码
+    LaunchedEffect(size, loadedComicId) {
+        if (size > 0 && loadedComicId == comicId && targetIndex in 0 until size) {
+            if (localSetting.readMode == "scroll") {
+                lazyListState.scrollToItem(targetIndex)
+            } else {
+                pagerState.scrollToPage(targetIndex)
+            }
         }
     }
 
@@ -672,6 +701,15 @@ private fun ChapterPickerDialog(
     onDismiss: () -> Unit,
     onSelect: (ComicChapter) -> Unit,
 ) {
+    val listState = rememberLazyListState()
+    val currentIndex = remember(chapters, currentChapterId) {
+        chapters.indexOfFirst { it.id == currentChapterId }
+    }
+    LaunchedEffect(currentIndex, chapters.size) {
+        if (currentIndex >= 0) {
+            listState.scrollToItem(currentIndex)
+        }
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(text = title) },
@@ -679,7 +717,10 @@ private fun ChapterPickerDialog(
             if (chapters.isEmpty()) {
                 Text(text = "暂无可选章节")
             } else {
-                LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.heightIn(max = 420.dp)
+                ) {
                     itemsIndexed(chapters) { index, chapter ->
                         val selected = chapter.id == currentChapterId
                         val read = chapter.id in readChapterIds

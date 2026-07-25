@@ -2,6 +2,7 @@ package com.par9uet.jm.repository.impl
 
 import com.par9uet.jm.data.models.CollectComicOrderFilter
 import com.par9uet.jm.data.models.COMIC_API_SOURCE_BUILTIN
+import com.par9uet.jm.data.models.COMIC_API_SOURCE_MIXED
 import com.par9uet.jm.repository.BaseRepository
 import com.par9uet.jm.repository.UserRepository
 import com.par9uet.jm.utils.log
@@ -205,7 +206,8 @@ class UserRepositoryImpl(
     }
 
     private fun useEmbeddedApi(): Boolean {
-        return localSettingManager.localSettingState.value.comicApiSource == COMIC_API_SOURCE_BUILTIN
+        val source = localSettingManager.localSettingState.value.comicApiSource
+        return source == COMIC_API_SOURCE_BUILTIN || source == COMIC_API_SOURCE_MIXED
     }
 
     private fun <T> withEmbeddedClient(block: (JmApiClient) -> T): T {

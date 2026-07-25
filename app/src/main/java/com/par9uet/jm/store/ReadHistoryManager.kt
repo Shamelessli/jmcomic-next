@@ -34,11 +34,27 @@ class ReadHistoryManager(
         val readIds = (old?.readChapterIds.orEmpty() + chapterId).distinct()
         current[comicKey] = ComicReadHistory(
             lastChapterId = chapterId,
-            readChapterIds = readIds
+            readChapterIds = readIds,
+            lastPageIndex = old?.lastPageIndex ?: 0,
+            lastChapterPageCount = old?.lastChapterPageCount ?: 0,
         )
         _readHistoryState.update { current }
         readHistoryStorage.set(current)
         return comicKey
+    }
+
+    fun saveReadProgress(comicKey: Int, chapterId: Int, pageIndex: Int, pageCount: Int) {
+        val current = _readHistoryState.value.toMutableMap()
+        val old = current[comicKey]
+        val readIds = (old?.readChapterIds.orEmpty() + chapterId).distinct()
+        current[comicKey] = ComicReadHistory(
+            lastChapterId = chapterId,
+            readChapterIds = readIds,
+            lastPageIndex = pageIndex,
+            lastChapterPageCount = pageCount,
+        )
+        _readHistoryState.update { current }
+        readHistoryStorage.set(current)
     }
 
     fun readChapterIds(
@@ -57,6 +73,17 @@ class ReadHistoryManager(
             return lastId
         }
         return lastId.takeIf { id -> comic.comicChapterList.any { it.id == id } }
+    }
+
+    fun lastReadPageIndex(
+        comicKey: Int,
+        chapterId: Int,
+        history: Map<Int, ComicReadHistory> = _readHistoryState.value
+    ): Int {
+        val entry = history[comicKey] ?: return 0
+        if (entry.lastChapterId != chapterId) return 0
+        if (entry.lastChapterPageCount <= 0) return 0
+        return entry.lastPageIndex.coerceIn(0, entry.lastChapterPageCount - 1)
     }
 
     override suspend fun init() {

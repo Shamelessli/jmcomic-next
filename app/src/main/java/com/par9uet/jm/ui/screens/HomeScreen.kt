@@ -1,5 +1,6 @@
 package com.par9uet.jm.ui.screens
 
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -16,11 +17,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -29,8 +28,6 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Password
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -177,6 +174,7 @@ fun HomeScreen(
         val comicList = remember(currentPageData, allExcludedTags) {
             (currentPageData?.list ?: listOf()).filterBlockedTags(allExcludedTags)
         }
+        val chipsScrollState = rememberScrollState()
         PullToRefreshBox(
             modifier = Modifier.fillMaxSize(),
             isRefreshing = homeComicState.isLoading,
@@ -188,6 +186,7 @@ fun HomeScreen(
                     .pointerInput(selectedTabIndexState.value, homeComicState.list.size) {
                         awaitEachGesture {
                             val down = awaitFirstDown(requireUnconsumed = false)
+                            val chipsScrollAtDown = chipsScrollState.value
                             var totalX = 0f
                             var totalY = 0f
                             do {
@@ -198,7 +197,12 @@ fun HomeScreen(
                                 totalY += change.position.y - change.previousPosition.y
                             } while (event.changes.any { it.pressed })
 
-                            if (abs(totalX) > 72.dp.toPx() && abs(totalX) > abs(totalY) * 1.2f) {
+                            // 如果分类标签行发生了滚动，说明用户在滑动标签，不触发切换
+                            val chipsScrolled = abs(chipsScrollState.value - chipsScrollAtDown) >= 2
+                            if (!chipsScrolled &&
+                                abs(totalX) > 72.dp.toPx() &&
+                                abs(totalX) > abs(totalY) * 1.2f
+                            ) {
                                 if (totalX < 0) {
                                     onTabClick(selectedTabIndexState.value + 1)
                                 } else {
@@ -225,12 +229,43 @@ fun HomeScreen(
                         HomeCategoryChips(
                             categories = homeComicState.list.map { it.title },
                             selectedIndex = selectedTabIndexState.value,
-                            onSelect = onTabClick
+                            onSelect = onTabClick,
+                            scrollState = chipsScrollState
                         )
                     }
                 }
                 items(items = comicList, key = { it.id }) {
                     Comic(it)
+                }
+                if (comicList.isEmpty() && !homeComicState.isLoading) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 48.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = null,
+                                modifier = Modifier.size(48.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                            )
+                            Text(
+                                text = if (allExcludedTags.isNotEmpty()) "当前分类的漫画均被标签排除过滤" else "暂无漫画",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (allExcludedTags.isNotEmpty()) {
+                                Text(
+                                    text = "可在 设置 → 标签排除 中调整",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -329,47 +364,80 @@ private fun HomeHeader(
     }
 }
 
+/**
+ * 首页分类按钮区。
+ * 使用 Row + horizontalScroll，每个子组件用 pointerInput 手动检测点击。
+ * 不使用 clickable（本地坐标位移为零导致误判 tap）。
+ */
 @Composable
 private fun HomeCategoryChips(
     categories: List<String>,
     selectedIndex: Int,
-    onSelect: (Int) -> Unit
+    onSelect: (Int) -> Unit,
+    scrollState: ScrollState
 ) {
-    val listState = rememberLazyListState()
-    LaunchedEffect(selectedIndex, categories.size) {
-        if (categories.isNotEmpty()) {
-            listState.animateScrollToItem(selectedIndex.coerceIn(0, categories.lastIndex))
-        }
-    }
-    LazyRow(
-        state = listState,
-        modifier = Modifier.fillMaxWidth(),
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(scrollState),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        items(categories.size) { index ->
-            val title = categories[index]
+        categories.forEachIndexed { index, title ->
             key(title) {
-                FilterChip(
+                CategoryChipItem(
+                    title = title,
                     selected = selectedIndex == index,
-                    onClick = { onSelect(index) },
-                    shape = MaterialTheme.shapes.large,
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primary,
-                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                        labelColor = MaterialTheme.colorScheme.onSurface
-                    ),
-                    label = {
-                        Text(
-                            text = title,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            fontWeight = if (selectedIndex == index) FontWeight.SemiBold else FontWeight.Normal
-                        )
-                    }
+                    scrollState = scrollState,
+                    onClick = { onSelect(index) }
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun CategoryChipItem(
+    title: String,
+    selected: Boolean,
+    scrollState: ScrollState,
+    onClick: () -> Unit
+) {
+    val containerColor = if (selected) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.surfaceContainer
+    }
+    val labelColor = if (selected) {
+        MaterialTheme.colorScheme.onPrimary
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+    Surface(
+        modifier = Modifier.pointerInput(Unit) {
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false)
+                val scrollAtDown = scrollState.value
+                do {
+                    val event = awaitPointerEvent()
+                } while (event.changes.any { it.pressed })
+                val scrollDelta = abs(scrollState.value - scrollAtDown)
+                if (scrollDelta < 2) {
+                    onClick()
+                }
+            }
+        },
+        shape = MaterialTheme.shapes.large,
+        color = containerColor,
+        contentColor = labelColor
+    ) {
+        Text(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            text = title,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            style = MaterialTheme.typography.labelLarge
+        )
     }
 }
 

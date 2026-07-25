@@ -1,6 +1,8 @@
 package com.par9uet.jm.repository.impl
 
 import com.par9uet.jm.data.models.COMIC_API_SOURCE_BUILTIN
+import com.par9uet.jm.data.models.COMIC_API_SOURCE_MIXED
+import com.par9uet.jm.data.models.COMIC_API_SOURCE_NETWORK
 import com.par9uet.jm.data.models.ComicSearchOrderFilter
 import com.par9uet.jm.repository.BaseRepository
 import com.par9uet.jm.repository.ComicRepository
@@ -170,7 +172,7 @@ class ComicRepositoryImpl(
     }
 
     override suspend fun getComicPicList(id: Int, shunt: String): NetWorkResult<ComicPicListResponse> {
-        if (useEmbeddedApi()) {
+        if (useEmbeddedApi() && !useNetworkApiForImages()) {
             return getComicPicListFromEmbeddedApi(id)
         }
         return when (val res = safeStringCall {
@@ -469,7 +471,13 @@ class ComicRepositoryImpl(
     }
 
     private fun useEmbeddedApi(): Boolean {
-        return localSettingManager.localSettingState.value.comicApiSource == COMIC_API_SOURCE_BUILTIN
+        val source = localSettingManager.localSettingState.value.comicApiSource
+        return source == COMIC_API_SOURCE_BUILTIN || source == COMIC_API_SOURCE_MIXED
+    }
+
+    private fun useNetworkApiForImages(): Boolean {
+        val source = localSettingManager.localSettingState.value.comicApiSource
+        return source == COMIC_API_SOURCE_NETWORK || source == COMIC_API_SOURCE_MIXED
     }
 
     private fun getEmbeddedClient(): JmApiClient = embeddedClientManager.getClient()

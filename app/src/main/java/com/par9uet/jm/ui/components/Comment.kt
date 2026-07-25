@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -19,9 +20,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.fromHtml
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.par9uet.jm.data.models.Comment
 import com.par9uet.jm.store.RemoteSettingManager
@@ -43,43 +44,58 @@ fun Comment(
     } else {
         "${remoteSetting.imgHost}/media/users/${comment.avatar}"
     }
-    Row(
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(10.dp),
-        horizontalArrangement = Arrangement.spacedBy(15.dp)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
-        AsyncImage(
-            model = avatarModel,
-            contentDescription = "${comment.nickname}的头像",
-            contentScale = ContentScale.FillBounds,
-            modifier = Modifier
-                .size(50.dp)
-                .clip(CircleShape)
-        )
-        Column(
-            modifier = Modifier.weight(1f),
+        Row(
+            modifier = Modifier.padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            if (showSource) {
-                val sourceText = comment.sourceText()
-                if (sourceText.isNotBlank()) {
-                    Text(
-                        text = sourceText,
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
+            AsyncImage(
+                model = avatarModel,
+                contentDescription = "${comment.nickname}的头像",
+                contentScale = ContentScale.FillBounds,
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+            )
+            Column(
+                modifier = Modifier.weight(1f),
+            ) {
+                if (showSource) {
+                    val sourceText = comment.sourceText()
+                    if (sourceText.isNotBlank()) {
+                        Text(
+                            text = sourceText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
                 }
-            }
-            Text(comment.nickname)
-            Text(comment.time, fontSize = 12.sp)
-            Spacer(modifier = Modifier.height(6.dp))
-            val content = comment.content.toSafeAnnotatedComment()
-            Text(text = content, fontSize = 13.sp)
-            action?.let {
+                Text(
+                    text = comment.nickname,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = comment.time,
+                    style = MaterialTheme.typography.labelSmall
+                )
                 Spacer(modifier = Modifier.height(6.dp))
-                it.invoke()
+                val content = comment.content.toSafeAnnotatedComment()
+                Text(
+                    text = content,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                action?.let {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    it.invoke()
+                }
             }
         }
     }

@@ -7,6 +7,7 @@ import com.par9uet.jm.data.models.APP_LOCK_TYPE_PATTERN
 import com.par9uet.jm.data.models.BlockedTagTemplate
 import com.par9uet.jm.data.models.COLOR_PALETTE_PRESET_DEFAULT
 import com.par9uet.jm.data.models.COMIC_API_SOURCE_BUILTIN
+import com.par9uet.jm.data.models.COMIC_API_SOURCE_MIXED
 import com.par9uet.jm.data.models.COMIC_API_SOURCE_NETWORK
 import com.par9uet.jm.data.models.LauncherDisguise
 import com.par9uet.jm.data.models.LocalSetting
@@ -65,8 +66,13 @@ class LocalSettingStorage(
                     listOf()
                 }
                 saved.copy(
+                    comicApiSourceList = listOf(
+                        COMIC_API_SOURCE_BUILTIN,
+                        COMIC_API_SOURCE_NETWORK,
+                        COMIC_API_SOURCE_MIXED
+                    ),
                     comicApiSource = if (savedJson.hasField("comicApiSource")) {
-                        listOf(COMIC_API_SOURCE_BUILTIN, COMIC_API_SOURCE_NETWORK)
+                        listOf(COMIC_API_SOURCE_BUILTIN, COMIC_API_SOURCE_NETWORK, COMIC_API_SOURCE_MIXED)
                             .firstOrNull { it == saved.comicApiSource }
                             ?: COMIC_API_SOURCE_BUILTIN
                     } else {

@@ -89,13 +89,15 @@ fun AppScreen(
                 ComicDetailScreen(id = id)
             }
             composable(
-                route = "comicChapter/{id}",
+                route = "comicChapter/{id}?currentChapterId={currentChapterId}",
                 arguments = listOf(
-                    navArgument(name = "id") { type = NavType.IntType; defaultValue = -1 }
+                    navArgument(name = "id") { type = NavType.IntType; defaultValue = -1 },
+                    navArgument(name = "currentChapterId") { type = NavType.IntType; defaultValue = -1 }
                 ),
             ) { backStackEntry ->
                 val id = backStackEntry.arguments?.getInt("id") ?: -1
-                ComicChapterScreen(/*comicId = id*/)
+                val currentChapterId = backStackEntry.arguments?.getInt("currentChapterId") ?: -1
+                ComicChapterScreen(currentChapterId = currentChapterId)
             }
             composable(
                 route = "comicRelate/{id}",

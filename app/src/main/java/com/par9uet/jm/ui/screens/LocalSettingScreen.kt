@@ -74,6 +74,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.par9uet.jm.data.models.COMIC_API_SOURCE_BUILTIN
+import com.par9uet.jm.data.models.COMIC_API_SOURCE_MIXED
 import com.par9uet.jm.data.models.COMIC_API_SOURCE_NETWORK
 import com.par9uet.jm.data.models.LauncherDisguise
 import com.par9uet.jm.data.models.LocalSetting
@@ -111,6 +112,7 @@ private val themeTextMap = mapOf(
 private val comicApiSourceTextMap = mapOf(
     COMIC_API_SOURCE_BUILTIN to "\u5185\u7f6e API",
     COMIC_API_SOURCE_NETWORK to "\u7f51\u7edc API",
+    COMIC_API_SOURCE_MIXED to "\u6df7\u5408 API",
 )
 
 private fun gridColumnsText(columns: Int): String =
@@ -216,14 +218,15 @@ fun LocalSettingScreen(
                     ) {
                         openSetting(SettingType.ComicApiSource)
                     }
-                    if (localSetting.comicApiSource == COMIC_API_SOURCE_NETWORK) {
+                    if (localSetting.comicApiSource == COMIC_API_SOURCE_NETWORK || localSetting.comicApiSource == COMIC_API_SOURCE_MIXED) {
                         SettingsRow(Icons.Rounded.Api, "API", localSetting.api) {
                             openSetting(SettingType.Api)
                         }
                         SettingsRow(Icons.Rounded.Image, "\u56fe\u7247\u7ebf\u8def", "\u7ebf\u8def ${localSetting.shunt}") {
                             openSetting(SettingType.Shunt)
                         }
-                    } else {
+                    }
+                    if (localSetting.comicApiSource == COMIC_API_SOURCE_BUILTIN || localSetting.comicApiSource == COMIC_API_SOURCE_MIXED) {
                         SettingsSwitchRow(
                             icon = Icons.Rounded.Recommend,
                             title = "\u504f\u597d\u63a8\u8350",

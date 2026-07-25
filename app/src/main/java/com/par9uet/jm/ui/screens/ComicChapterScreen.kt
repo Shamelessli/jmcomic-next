@@ -7,11 +7,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -27,6 +29,7 @@ import org.koin.compose.viewmodel.koinActivityViewModel
 
 @Composable
 fun ComicChapterScreen(
+    currentChapterId: Int = -1,
     comicDetailViewModel: ComicDetailViewModel = koinActivityViewModel(),
     readHistoryManager: ReadHistoryManager = getKoin().get(),
 ) {
@@ -44,8 +47,26 @@ fun ComicChapterScreen(
     }
     val mainNavController = LocalMainNavController.current
 
+    // 自动滚动到当前阅读章节
+    val gridState = rememberLazyGridState()
+    val currentIndex = remember(comicChapterList, currentChapterId) {
+        if (currentChapterId > 0) {
+            comicChapterList.indexOfFirst { it.id == currentChapterId }
+        } else -1
+    }
+    LaunchedEffect(currentIndex, comicChapterList.size) {
+        if (currentIndex >= 0) {
+            val spanCount = 4
+            val targetRow = currentIndex / spanCount
+            // 让当前章节显示在视口中部偏上的位置
+            val scrollTarget = ((targetRow - 2).coerceAtLeast(0)) * spanCount
+            gridState.scrollToItem(scrollTarget)
+        }
+    }
+
     CommonScaffold(title = "选择章节") {
         LazyVerticalGrid(
+            state = gridState,
             contentPadding = PaddingValues(10.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -53,15 +74,19 @@ fun ComicChapterScreen(
         ) {
             itemsIndexed(comicChapterList, key = { _, item -> item.id }) { index, item ->
                 val read = item.id in readChapterIds
+                val isCurrent = currentChapterId > 0 && item.id == currentChapterId
                 AssistChip(
                     modifier = Modifier.fillMaxSize(),
-                    colors = if (read) {
-                        AssistChipDefaults.assistChipColors(
+                    colors = when {
+                        isCurrent -> AssistChipDefaults.assistChipColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            labelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        read -> AssistChipDefaults.assistChipColors(
                             containerColor = MaterialTheme.colorScheme.secondaryContainer,
                             labelColor = MaterialTheme.colorScheme.onSecondaryContainer
                         )
-                    } else {
-                        AssistChipDefaults.assistChipColors()
+                        else -> AssistChipDefaults.assistChipColors()
                     },
                     onClick = {
                         mainNavController.navigate("comicRead/${item.id}")
