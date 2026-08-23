@@ -72,6 +72,7 @@ class UserRepositoryImpl(
             return withContext(Dispatchers.IO) {
                 try {
                     val client = embeddedClientManager.getClient()
+                    embeddedClientManager.setFavoriteOrder(order.value)
                     val query = FavoriteQuery.Builder()
                         .folderId(folderId)
                         .page(page)
@@ -79,15 +80,20 @@ class UserRepositoryImpl(
                     val favPage = client.getFavorites(query)
                     val metas = favPage.content().orEmpty()
                     // 为每个收藏项获取完整 Album 以补全所有 tags（并发请求）
-                    val listWithFullTags = coroutineScope {
+                    val albums = coroutineScope {
                         metas.map { meta ->
                             async {
-                                val fullTags = runCatching {
-                                    client.getAlbum(meta.id().orEmpty()).tags().orEmpty()
-                                }.getOrDefault(meta.tags().orEmpty())
-                                meta.toListItem(fullTags)
+                                meta to runCatching { client.getAlbum(meta.id().orEmpty()) }.getOrNull()
                             }
                         }.map { it.await() }
+                    }
+                    val orderedAlbums = if (order == CollectComicOrderFilter.UPDATE_TIME) {
+                        albums.sortedByDescending { (_, album) -> album?.addTime()?.toLongOrNull() ?: 0L }
+                    } else {
+                        albums
+                    }
+                    val listWithFullTags = orderedAlbums.map { (meta, album) ->
+                        meta.toListItem(album?.tags().orEmpty().ifEmpty { meta.tags().orEmpty() })
                     }
                     NetWorkResult.Success(
                         UserCollectComicListResponse(

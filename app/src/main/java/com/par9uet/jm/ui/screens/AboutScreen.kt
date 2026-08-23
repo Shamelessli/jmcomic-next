@@ -80,6 +80,7 @@ import com.par9uet.jm.store.AppUpdateDownloadManager
 import com.par9uet.jm.store.AppUpdateDownloadRequest
 import com.par9uet.jm.store.AppUpdateDownloadStatus
 import com.par9uet.jm.store.formatBytes
+import com.par9uet.jm.network.DohManager
 import com.par9uet.jm.ui.components.CommonScaffold
 import com.par9uet.jm.utils.MarkdownText
 import kotlinx.coroutines.Dispatchers
@@ -308,7 +309,8 @@ private fun TechRow(name: String, desc: String) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CheckUpdateScreen(
-    updateDownloadManager: AppUpdateDownloadManager = getKoin().get()
+    updateDownloadManager: AppUpdateDownloadManager = getKoin().get(),
+    dohManager: DohManager = getKoin().get(),
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
@@ -324,7 +326,7 @@ fun CheckUpdateScreen(
     fun checkUpdate() {
         updateState = UpdateState.Checking
         coroutineScope.launch {
-            val nextState = fetchLatestRelease().fold(
+            val nextState = fetchLatestRelease(dohManager).fold(
                 onSuccess = {
                     UpdateState.Success(
                         release = it,
@@ -980,14 +982,19 @@ private fun installApk(context: Context, savedPath: String) {
     }
 }
 
-private suspend fun fetchLatestRelease(): Result<GithubRelease> = withContext(Dispatchers.IO) {
+private suspend fun fetchLatestRelease(dohManager: DohManager): Result<GithubRelease> = withContext(Dispatchers.IO) {
     runCatching {
         val request = Request.Builder()
             .url(GITHUB_RELEASE_API)
             .header("Accept", "application/vnd.github+json")
             .header("User-Agent", "jmcomic-next-android")
             .build()
-        OkHttpClient().newCall(request).execute().use { response ->
+        OkHttpClient.Builder()
+            .dns(dohManager)
+            .build()
+            .newCall(request)
+            .execute()
+            .use { response ->
             if (!response.isSuccessful) {
                 error("GitHub 返回 ${response.code}")
             }

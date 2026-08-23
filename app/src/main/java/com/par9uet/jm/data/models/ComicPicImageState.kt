@@ -241,6 +241,11 @@ class ComicPicImageState(
     }
 
     private fun extractPageFromUrl(): String {
+        // A SAF document URI encodes the full folder hierarchy after its last
+        // slash. Using it as a filename creates paths over Android's filename
+        // limit (ENAMETOOLONG). Local pages are already ordered by index, so a
+        // compact index is the correct decode-cache key.
+        if (originSrc.startsWith("content://")) return index.toString()
         return originSrc.substringBefore('?').substringAfterLast('/').substringBeforeLast('.')
     }
 

@@ -6,6 +6,8 @@ import com.google.gson.JsonParser
 import com.par9uet.jm.data.models.AiSearchEngine
 import com.par9uet.jm.data.models.AiSearchEngineProvider
 import com.par9uet.jm.data.models.AiSearchSettings
+import com.par9uet.jm.network.DohManager
+import com.par9uet.jm.utils.applyTlsCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -56,7 +58,8 @@ sealed class SearchProgress {
 }
 
 class AiChatRepository(
-    private val gson: Gson
+    private val gson: Gson,
+    private val dohManager: DohManager,
 ) {
     companion object {
         private const val TARGET_API = "https://app.unlimitedai.chat/api/chat"
@@ -92,12 +95,16 @@ class AiChatRepository(
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
+        .dns(dohManager)
+        .applyTlsCompat()
         .build()
 
     private val searchClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
         .writeTimeout(15, TimeUnit.SECONDS)
+        .dns(dohManager)
+        .applyTlsCompat()
         .build()
 
     /**

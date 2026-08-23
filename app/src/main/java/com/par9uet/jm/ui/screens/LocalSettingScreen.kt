@@ -1,5 +1,9 @@
 package com.par9uet.jm.ui.screens
 
+import android.content.Intent
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -27,6 +31,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudSync
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.DarkMode
+import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.History
@@ -54,6 +59,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.InputChip
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -62,6 +68,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -69,20 +76,38 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.par9uet.jm.data.models.COMIC_API_SOURCE_BUILTIN
 import com.par9uet.jm.data.models.COMIC_API_SOURCE_MIXED
 import com.par9uet.jm.data.models.COMIC_API_SOURCE_NETWORK
+import com.par9uet.jm.data.models.CACHE_INTEGRITY_CHECK_FULL
+import com.par9uet.jm.data.models.CACHE_INTEGRITY_CHECK_OFF
+import com.par9uet.jm.data.models.CACHE_INTEGRITY_CHECK_PARTIAL
 import com.par9uet.jm.data.models.LauncherDisguise
 import com.par9uet.jm.data.models.LocalSetting
+import com.par9uet.jm.network.DohManager
 import com.par9uet.jm.store.LocalSettingManager
 import com.par9uet.jm.ui.components.CommonScaffold
 import com.par9uet.jm.ui.components.SelectDialog
 import com.par9uet.jm.ui.components.SelectOption
 import org.koin.compose.getKoin
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import androidx.work.workDataOf
+import androidx.lifecycle.Observer
+import com.par9uet.jm.worker.CACHE_MIGRATION_PROGRESS
+import com.par9uet.jm.worker.CACHE_MIGRATION_STAGE
+import com.par9uet.jm.worker.CACHE_MIGRATION_TARGET_URI
+import com.par9uet.jm.worker.CACHE_MIGRATION_WORK_NAME
+import com.par9uet.jm.worker.CacheMigrationWorker
 
 private sealed class SettingType {
     object ComicApiSource : SettingType()
@@ -97,6 +122,7 @@ private sealed class SettingType {
     object RecommendSource : SettingType()
     object AllGridColumns : SettingType()
     object ReadDecodeConcurrency : SettingType()
+    object CacheIntegrityCheck : SettingType()
 }
 
 private const val NOTIFICATION_ON_WITH_NAME = "on_with_name"
@@ -120,13 +146,50 @@ private fun gridColumnsText(columns: Int): String =
 
 @Composable
 fun LocalSettingScreen(
-    localSettingManager: LocalSettingManager = getKoin().get()
+    localSettingManager: LocalSettingManager = getKoin().get(),
+    dohManager: DohManager = getKoin().get(),
 ) {
     val mainNavController = LocalMainNavController.current
+    val context = LocalContext.current
     val localSetting by localSettingManager.localSettingState.collectAsState()
+    val dohStatus by dohManager.status.collectAsState()
     var settingType by remember { mutableStateOf<SettingType>(SettingType.Api) }
     var isOpenSettingSelectDialog by remember { mutableStateOf(false) }
     var showHomeExcludedTagsDialog by remember { mutableStateOf(false) }
+    var showCachePathDialog by remember { mutableStateOf(false) }
+    val workManager = remember(context) { WorkManager.getInstance(context) }
+    var migrationWorkList by remember { mutableStateOf<List<WorkInfo>>(emptyList()) }
+    DisposableEffect(workManager) {
+        val liveData = workManager.getWorkInfosForUniqueWorkLiveData(CACHE_MIGRATION_WORK_NAME)
+        val observer = Observer<List<WorkInfo>> { migrationWorkList = it.orEmpty() }
+        liveData.observeForever(observer)
+        onDispose { liveData.removeObserver(observer) }
+    }
+    val migrationWork = migrationWorkList.firstOrNull { !it.state.isFinished } ?: migrationWorkList.lastOrNull()
+    val migrationActive = migrationWork?.state in setOf(
+        WorkInfo.State.ENQUEUED,
+        WorkInfo.State.RUNNING,
+        WorkInfo.State.BLOCKED,
+    )
+    var hiddenMigrationWorkId by remember { mutableStateOf<java.util.UUID?>(null) }
+
+    fun startCacheMigration(targetUri: String) {
+        val request = OneTimeWorkRequestBuilder<CacheMigrationWorker>()
+            .setInputData(workDataOf(CACHE_MIGRATION_TARGET_URI to targetUri))
+            .build()
+        hiddenMigrationWorkId = null
+        workManager.enqueueUniqueWork(CACHE_MIGRATION_WORK_NAME, ExistingWorkPolicy.REPLACE, request)
+    }
+
+    val cacheFolderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
+        if (uri != null) {
+            val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+            runCatching { context.contentResolver.takePersistableUriPermission(uri, flags) }
+            startCacheMigration(uri.toString())
+        }
+    }
 
     fun openSetting(type: SettingType) {
         settingType = type
@@ -159,7 +222,7 @@ fun LocalSettingScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item {
-                SettingsSection(title = "\u663e\u793a") {
+                SettingsSection(title = "界面与交互") {
                     SettingsRow(Icons.Rounded.DarkMode, "\u4e3b\u9898", themeTextMap[localSetting.theme].orEmpty()) {
                         openSetting(SettingType.Theme)
                     }
@@ -199,7 +262,7 @@ fun LocalSettingScreen(
                 }
             }
             item {
-                SettingsSection(title = "\u9690\u79c1") {
+                SettingsSection(title = "安全与账户") {
                     SettingsRow(
                         icon = Icons.Rounded.Lock,
                         title = "\u5e94\u7528\u9501",
@@ -207,10 +270,20 @@ fun LocalSettingScreen(
                     ) {
                         mainNavController.navigate("appLockSetting")
                     }
+                    SettingsRow(Icons.Rounded.CloudSync, "数据备份", "备份与恢复应用设置") {
+                        mainNavController.navigate("backupRestore")
+                    }
                 }
             }
             item {
-                SettingsSection(title = "\u8fde\u63a5") {
+                SettingsSection(title = "网络与数据") {
+                    SettingsRow(
+                        Icons.Rounded.Dns,
+                        "DoH",
+                        if (dohStatus.active) "已启用 · ${dohStatus.serverName}" else "未启用",
+                    ) {
+                        mainNavController.navigate("dohSetting")
+                    }
                     SettingsRow(
                         Icons.Rounded.Api,
                         "\u6570\u636e\u6e90",
@@ -259,7 +332,7 @@ fun LocalSettingScreen(
                 }
             }
             item {
-                SettingsSection(title = "\u9605\u8bfb") {
+                SettingsSection(title = "阅读与缓存") {
                     SettingsRow(Icons.Rounded.Tune, "\u56fe\u7247\u9884\u52a0\u8f7d", prefetchText(localSetting.prefetchCount)) {
                         openSetting(SettingType.PrefetchCount)
                     }
@@ -272,6 +345,13 @@ fun LocalSettingScreen(
                         if (localSetting.readTapMode == "side") "\u5de6\u53f3\u4e24\u4fa7" else "\u9ed8\u8ba4\u533a\u57df"
                     ) {
                         openSetting(SettingType.ReadTapMode)
+                    }
+                    SettingsRow(
+                        Icons.Rounded.Memory,
+                        "缓存检查",
+                        cacheIntegrityCheckText(localSetting.cacheIntegrityCheckMode),
+                    ) {
+                        openSetting(SettingType.CacheIntegrityCheck)
                     }
                     SettingsSwitchRow(
                         icon = Icons.Rounded.Memory,
@@ -294,17 +374,33 @@ fun LocalSettingScreen(
                             openSetting(SettingType.ReadDecodeConcurrency)
                         }
                     }
-                }
-            }
-            item {
-                SettingsSection(title = "\u901a\u77e5") {
-                    SettingsRow(Icons.Rounded.Notifications, "\u901a\u77e5\u7ba1\u7406", notificationText(localSetting)) {
-                        openSetting(SettingType.NotificationManagement)
+                    SettingsRow(
+                        icon = Icons.Rounded.Download,
+                        title = "缓存路径",
+                        value = if (localSetting.downloadTreeUri.isBlank()) "默认路径" else "自定义路径"
+                    ) {
+                        if (migrationActive) hiddenMigrationWorkId = null else showCachePathDialog = true
+                    }
+                    SettingsRow(Icons.Rounded.CleaningServices, "缓存清理", "清理图片、漫画等缓存文件") {
+                        mainNavController.navigate("cacheCleanup")
                     }
                 }
             }
             item {
-                SettingsSection(title = "\u5176\u4ed6") {
+                SettingsSection(title = "通知与后台") {
+                    SettingsRow(Icons.Rounded.Notifications, "\u901a\u77e5\u7ba1\u7406", notificationText(localSetting)) {
+                        openSetting(SettingType.NotificationManagement)
+                    }
+                    SettingsSwitchRow(
+                        icon = Icons.Rounded.CloudSync,
+                        title = "缓存迁移进度通知",
+                        value = localSetting.showCacheMigrationNotification,
+                        onCheckedChange = localSettingManager::updateShowCacheMigrationNotification,
+                    )
+                }
+            }
+            item {
+                SettingsSection(title = "通用") {
                     SettingsSwitchRow(
                         icon = Icons.Rounded.EventAvailable,
                         title = "\u81ea\u52a8\u7b7e\u5230",
@@ -313,12 +409,6 @@ fun LocalSettingScreen(
                     )
                     SettingsRow(Icons.Rounded.BugReport, "\u67e5\u770b\u65e5\u5fd7", "\u8c03\u8bd5\u548c\u9519\u8bef\u4fe1\u606f") {
                         mainNavController.navigate("logViewer")
-                    }
-                    SettingsRow(Icons.Rounded.CleaningServices, "\u7f13\u5b58\u6e05\u7406", "\u6e05\u7406\u56fe\u7247\u3001\u6f2b\u753b\u7b49\u7f13\u5b58\u6587\u4ef6") {
-                        mainNavController.navigate("cacheCleanup")
-                    }
-                    SettingsRow(Icons.Rounded.CloudSync, "\u6570\u636e\u5907\u4efd", "\u5907\u4efd\u4e0e\u6062\u590d\u5e94\u7528\u8bbe\u7f6e") {
-                        mainNavController.navigate("backupRestore")
                     }
                     SettingsRow(Icons.Rounded.Psychology, "\u4eba\u683c\u9762\u5177", "\u81ea\u5b9a\u4e49 AI \u540d\u5b57\u3001\u804c\u4e1a\u3001\u7b80\u4ecb\u7b49") {
                         mainNavController.navigate("personaManager")
@@ -351,6 +441,52 @@ fun LocalSettingScreen(
                 onDismiss = { showHomeExcludedTagsDialog = false }
             )
         }
+        if (showCachePathDialog) {
+            AlertDialog(
+                onDismissRequest = { showCachePathDialog = false },
+                title = { Text("\u7f13\u5b58\u8def\u5f84") },
+                text = { Text("选择新位置后会迁移已有漫画缓存。迁移完成前继续使用原路径，可切换到后台并通过通知查看进度。") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showCachePathDialog = false
+                        cacheFolderLauncher.launch(null)
+                    }) { Text("\u81ea\u5b9a\u4e49\u8def\u5f84") }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        showCachePathDialog = false
+                        startCacheMigration("")
+                    }) { Text("\u9ed8\u8ba4\u8def\u5f84") }
+                }
+            )
+        }
+        if (migrationActive && migrationWork?.id != hiddenMigrationWorkId) {
+            val progress = migrationWork?.progress?.getInt(CACHE_MIGRATION_PROGRESS, 0) ?: 0
+            val stage = migrationWork?.progress?.getString(CACHE_MIGRATION_STAGE) ?: "正在准备缓存迁移"
+            AlertDialog(
+                onDismissRequest = { hiddenMigrationWorkId = migrationWork?.id },
+                title = { Text("正在迁移缓存") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(stage)
+                        LinearProgressIndicator(
+                            progress = { progress / 100f },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            text = "$progress% · 迁移完成前请勿移除原目录授权",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { hiddenMigrationWorkId = migrationWork?.id }) {
+                        Text("后台运行")
+                    }
+                },
+            )
+        }
     }
 }
 
@@ -361,6 +497,7 @@ private fun SettingSelectDialogContent(
     localSettingManager: LocalSettingManager,
     onDismiss: () -> Unit
 ) {
+    var pendingUnsupportedSource by remember { mutableStateOf<String?>(null) }
     // 网格列数使用滑块设置，不走选项列表
     if (settingType is SettingType.AllGridColumns) {
         AllGridColumnSliderDialog(
@@ -455,6 +592,15 @@ private fun SettingSelectDialogContent(
             )
         }
     }
+    val cacheIntegrityCheckOptionList by remember {
+        derivedStateOf {
+            listOf(
+                SelectOption("关闭（默认）", CACHE_INTEGRITY_CHECK_OFF),
+                SelectOption("部分检查（配置、封面）", CACHE_INTEGRITY_CHECK_PARTIAL),
+                SelectOption("完全检查（配置、封面、全部图片）", CACHE_INTEGRITY_CHECK_FULL),
+            )
+        }
+    }
     SelectDialog(
         title = settingTitle(settingType),
         value = settingValue(settingType, localSetting),
@@ -470,10 +616,19 @@ private fun SettingSelectDialogContent(
             is SettingType.NotificationManagement -> notificationOptionList
             is SettingType.RecommendSource -> recommendSourceOptionList
             is SettingType.ReadDecodeConcurrency -> readDecodeConcurrencyOptionList
+            is SettingType.CacheIntegrityCheck -> cacheIntegrityCheckOptionList
         },
         onSelect = {
+            var shouldDismiss = true
             when (settingType) {
-                is SettingType.ComicApiSource -> localSettingManager.updateComicApiSource(it)
+                is SettingType.ComicApiSource -> {
+                    if (it == COMIC_API_SOURCE_NETWORK || it == COMIC_API_SOURCE_MIXED) {
+                        pendingUnsupportedSource = it
+                        shouldDismiss = false
+                    } else {
+                        localSettingManager.updateComicApiSource(it)
+                    }
+                }
                 is SettingType.Api -> localSettingManager.updateApi(it)
                 is SettingType.Theme -> localSettingManager.updateTheme(it)
                 is SettingType.LauncherDisguise -> localSettingManager.updateLauncherDisguise(it)
@@ -489,11 +644,34 @@ private fun SettingSelectDialogContent(
                 }
                 is SettingType.RecommendSource -> localSettingManager.updateRecommendSource(it)
                 is SettingType.ReadDecodeConcurrency -> localSettingManager.updateReadDecodeConcurrency(it.toIntOrNull() ?: 2)
+                is SettingType.CacheIntegrityCheck -> localSettingManager.updateCacheIntegrityCheckMode(it)
             }
-            onDismiss()
+            if (shouldDismiss) onDismiss()
         },
         onDismissRequest = onDismiss
     )
+    pendingUnsupportedSource?.let { source ->
+        AlertDialog(
+            onDismissRequest = { pendingUnsupportedSource = null },
+            title = { Text("\u7f51\u7edc API \u8b66\u544a") },
+            text = {
+                Text(
+                    "\u7f51\u7edc API \u76ee\u524d\u5df2\u9000\u51fa\u652f\u6301\uff0c\u53ef\u80fd\u5bfc\u81f4\u8f6f\u4ef6\u4e0d\u7a33\u5b9a\u3001\u529f\u80fd\u65e0\u6cd5\u4f7f\u7528\u3002",
+                    color = MaterialTheme.colorScheme.error
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    localSettingManager.updateComicApiSource(source)
+                    pendingUnsupportedSource = null
+                    onDismiss()
+                }) { Text("\u786e\u5b9a") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingUnsupportedSource = null }) { Text("\u53d6\u6d88") }
+            }
+        )
+    }
 }
 
 @Composable
@@ -727,8 +905,19 @@ private fun SettingsBaseRow(
     onClick: () -> Unit,
     trailingContent: @Composable () -> Unit
 ) {
+    val dividerColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f)
     ListItem(
-        modifier = Modifier.clickable(onClick = onClick),
+        modifier = Modifier
+            .clickable(onClick = onClick)
+            .drawBehind {
+                val dividerY = size.height - 1.dp.toPx()
+                drawLine(
+                    color = dividerColor,
+                    start = Offset(72.dp.toPx(), dividerY),
+                    end = Offset(size.width, dividerY),
+                    strokeWidth = 1.dp.toPx()
+                )
+            },
         leadingContent = {
             Surface(
                 modifier = Modifier.size(40.dp),
@@ -783,6 +972,12 @@ private fun readModeText(value: String): String {
     }
 }
 
+private fun cacheIntegrityCheckText(value: String): String = when (value) {
+    CACHE_INTEGRITY_CHECK_FULL -> "完全检查"
+    CACHE_INTEGRITY_CHECK_PARTIAL -> "部分检查"
+    else -> "关闭"
+}
+
 private fun notificationText(localSetting: LocalSetting): String {
     return when {
         !localSetting.showComicCacheNotification -> "\u5173\u95ed"
@@ -805,6 +1000,7 @@ private fun settingTitle(type: SettingType): String {
         is SettingType.RecommendSource -> "\u63a8\u8350\u6e90"
         is SettingType.AllGridColumns -> "\u7f51\u683c\u5217\u6570"
         is SettingType.ReadDecodeConcurrency -> "\u5e76\u53d1\u89e3\u7801\u6570"
+        is SettingType.CacheIntegrityCheck -> "缓存检查"
     }
 }
 
@@ -826,5 +1022,6 @@ private fun settingValue(type: SettingType, localSetting: LocalSetting): String 
         is SettingType.RecommendSource -> localSetting.recommendSource
         is SettingType.AllGridColumns -> ""
         is SettingType.ReadDecodeConcurrency -> "${localSetting.readDecodeConcurrency}"
+        is SettingType.CacheIntegrityCheck -> localSetting.cacheIntegrityCheckMode
     }
 }

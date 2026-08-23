@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.sp
 import coil.ImageLoader
 import coil.compose.AsyncImage
 import com.par9uet.jm.data.models.Comic
+import com.par9uet.jm.network.ComicCoverUrlResolver
 import com.par9uet.jm.repository.ComicRepository
 import com.par9uet.jm.retrofit.model.ComicDetailResponse
 import com.par9uet.jm.retrofit.model.NetWorkResult
@@ -61,10 +62,15 @@ fun ComicCoverImage(
     var showDetailDialog by remember { mutableStateOf(false) }
     var detailInfoText by remember { mutableStateOf("") }
     var detailLoading by remember { mutableStateOf(false) }
+    val coverUrls = ComicCoverUrlResolver.resolve(
+        comicId = comic.id,
+        apiImage = comic.coverUrl,
+        configuredImageHost = remoteSetting.imgHost,
+    )
 
     Box(modifier = modifier) {
-        AsyncImage(
-            model = "${remoteSetting.imgHost}/media/albums/${comic.id}_3x4.jpg",
+        FallbackAsyncImage(
+            coverUrls = coverUrls,
             imageLoader = imageLoader,
             contentDescription = "${comic.name}的封面",
             contentScale = ContentScale.Crop,
@@ -123,7 +129,7 @@ fun ComicCoverImage(
                         fontSize = 11.sp,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 400.dp)
+                            .heightIn(max = adaptiveDialogMaxHeight(400.dp))
                             .verticalScroll(rememberScrollState())
                     )
                 }
@@ -138,6 +144,34 @@ fun ComicCoverImage(
                 TextButton(onClick = { showDetailDialog = false }) { Text("关闭") }
             }
         )
+    }
+}
+
+@Composable
+fun FallbackAsyncImage(
+    coverUrls: List<String>,
+    imageLoader: ImageLoader,
+    contentDescription: String?,
+    contentScale: ContentScale,
+    modifier: Modifier = Modifier,
+) {
+    var coverIndex by remember(coverUrls) { mutableStateOf(0) }
+    val coverUrl = coverUrls.getOrNull(coverIndex)
+    if (coverUrl != null) {
+        AsyncImage(
+            model = coverUrl,
+            imageLoader = imageLoader,
+            contentDescription = contentDescription,
+            contentScale = contentScale,
+            onError = {
+                if (coverIndex < coverUrls.lastIndex) {
+                    coverIndex += 1
+                }
+            },
+            modifier = modifier,
+        )
+    } else {
+        Box(modifier = modifier)
     }
 }
 

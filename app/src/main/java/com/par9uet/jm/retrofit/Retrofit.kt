@@ -6,6 +6,7 @@ import com.par9uet.jm.retrofit.interceptor.BaseUrlInterceptor
 import com.par9uet.jm.retrofit.interceptor.InitInterceptor
 import com.par9uet.jm.retrofit.interceptor.ToastInterceptor
 import com.par9uet.jm.retrofit.interceptor.TokenInterceptor
+import com.par9uet.jm.network.DohManager
 import com.par9uet.jm.storage.CookieStorage
 import com.par9uet.jm.task.AppInitTask
 import com.par9uet.jm.task.AppTaskInfo
@@ -28,6 +29,7 @@ class Retrofit(
     private val scalarsConverterFactory: ScalarsConverterFactory,
     private val responseConverterFactory: ResponseConverterFactory,
     private val primitiveToRequestBodyConverterFactory: PrimitiveToRequestBodyConverterFactory,
+    private val dohManager: DohManager,
     private val cookieStorage: CookieStorage
 ) : AppInitTask {
     private val appTaskInfo = AppTaskInfo(
@@ -65,6 +67,7 @@ class Retrofit(
                 level = HttpLoggingInterceptor.Level.BASIC
             })
             .cookieJar(cookieJar)
+            .dns(dohManager)
             .applyTlsCompat()
             .build()
     private val retrofit: Retrofit by lazy {

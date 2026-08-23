@@ -32,7 +32,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation.compose.rememberNavController
-import com.par9uet.jm.store.InitManager
 import com.par9uet.jm.store.LocalSettingManager
 import com.par9uet.jm.store.ToastManager
 import com.par9uet.jm.store.UserManager
@@ -41,6 +40,7 @@ import com.par9uet.jm.ui.screens.AppScreen
 import com.par9uet.jm.ui.screens.LoadingScreen
 import com.par9uet.jm.ui.screens.NsfwWarningDialog
 import com.par9uet.jm.ui.screens.WelcomeScreen
+import com.par9uet.jm.ui.components.ComicCoverImage
 import com.par9uet.jm.ui.viewModel.GlobalViewModel
 import com.par9uet.jm.ui.viewModel.UserViewModel
 import kotlinx.coroutines.flow.first
@@ -53,20 +53,15 @@ fun App(
     userViewModel: UserViewModel = koinActivityViewModel(),
     toastManager: ToastManager = getKoin().get(),
     localSettingManager: LocalSettingManager = getKoin().get(),
-    initManager: InitManager = getKoin().get(),
     userManager: UserManager = getKoin().get(),
-    remoteSettingManager: com.par9uet.jm.store.RemoteSettingManager = getKoin().get(),
-    imageLoader: coil.ImageLoader = getKoin().get()
 ) {
-    LaunchedEffect(Unit) {
-        globalViewModel.init()
-    }
     val localSetting by localSettingManager.localSettingState.collectAsState()
-    val remoteSetting by remoteSettingManager.remoteSettingState.collectAsState()
 
     // 锁定状态：初始为 true（启动即锁定），等待本地设置加载完成后根据 appLockEnabled 决定
     // 这样可以避免启动时主界面内容闪现后再显示锁屏
     var isLocked by remember { mutableStateOf(true) }
+    // 冷启动尚未解锁时不创建业务页面；解锁过一次后保留页面组合，确保系统文件选择器回调不丢失。
+    var hasUnlockedOnce by remember { mutableStateOf(false) }
     var settingsLoaded by remember { mutableStateOf(false) }
     // NSFW 警告本次会话是否已处理
     var sessionNsfwDismissed by remember { mutableStateOf(false) }
@@ -75,14 +70,9 @@ fun App(
     // 启动加载动画（初始化期间及引导完成后显示）
     var showLoadingScreen by remember { mutableStateOf(true) }
 
-    // 本地设置初始化加载完成后再决定启动时是否锁定
-    // 增加超时保护：最多等待 8 秒，避免网络初始化卡死导致永久黑屏
+    // 应用锁配置只依赖本地存储：先读取并决定是否锁屏，再启动其余初始化任务。
     LaunchedEffect(Unit) {
-        runCatching {
-            kotlinx.coroutines.withTimeoutOrNull(8000L) {
-                initManager.deferred.await()
-            }
-        }
+        runCatching { localSettingManager.init() }
         settingsLoaded = true
         // 首次启动且未完成引导时显示欢迎页
         if (!localSettingManager.localSettingState.value.onboardingCompleted) {
@@ -91,26 +81,31 @@ fun App(
         // 仅当应用锁未开启时才解锁；若已开启，isLocked 保持 true，立即显示锁屏
         if (!localSettingManager.localSettingState.value.appLockEnabled) {
             isLocked = false
+            hasUnlockedOnce = true
         }
         if (localSettingManager.localSettingState.value.nsfwWarningDismissed) {
             sessionNsfwDismissed = true
         }
+        globalViewModel.init()
     }
-    // 启动加载动画：设置加载完成且无需引导时，显示 2.5 秒后自动消失
+    // 用户要求开屏过渡固定约 3 秒；若启用应用锁，先完成锁屏核验再开始计时。
     LaunchedEffect(settingsLoaded, showOnboarding) {
         if (settingsLoaded && !showOnboarding) {
-            kotlinx.coroutines.delay(2500L)
+            kotlinx.coroutines.delay(1500L)
             showLoadingScreen = false
         }
     }
-    // 应用锁被关闭时解除锁定
-    LaunchedEffect(localSetting.appLockEnabled) {
-        if (settingsLoaded && !localSetting.appLockEnabled) isLocked = false
+    // 开启应用锁立即进入核验；关闭时立即解除。首次加载也由这里进行安全兜底。
+    LaunchedEffect(settingsLoaded, localSetting.appLockEnabled) {
+        if (settingsLoaded) {
+            isLocked = localSetting.appLockEnabled
+            if (!localSetting.appLockEnabled) hasUnlockedOnce = true
+        }
     }
 
     // 自动签到：设置加载完成且自动签到开关开启时执行
-    LaunchedEffect(settingsLoaded) {
-        if (!settingsLoaded) return@LaunchedEffect
+    LaunchedEffect(settingsLoaded, isLocked) {
+        if (!settingsLoaded || isLocked) return@LaunchedEffect
         val ls = localSettingManager.localSettingState.value
         if (!ls.autoSignInEnabled) return@LaunchedEffect
         if (!userManager.isLoginState.first()) return@LaunchedEffect
@@ -125,11 +120,11 @@ fun App(
         userViewModel.signIn()
     }
 
-    // 从后台返回时重新锁定
+    // ON_PAUSE 比 ON_STOP 更可靠：按 Home、切换应用、锁屏或打开外部系统界面时立即上锁。
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, localSetting.appLockEnabled) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP && localSetting.appLockEnabled) {
+            if (event == Lifecycle.Event.ON_PAUSE && localSetting.appLockEnabled) {
                 isLocked = true
             }
         }
@@ -146,8 +141,8 @@ fun App(
     var pendingNavComicId by remember { mutableStateOf(-1) }
     val mainNavController = rememberNavController()
 
-    DisposableEffect(lifecycleOwner, localSetting.clipboardAutoDetectEnabled, settingsLoaded) {
-        if (!localSetting.clipboardAutoDetectEnabled) {
+    DisposableEffect(lifecycleOwner, localSetting.clipboardAutoDetectEnabled, settingsLoaded, isLocked) {
+        if (!localSetting.clipboardAutoDetectEnabled || !settingsLoaded || isLocked) {
             onDispose { }
         } else {
             val observer = LifecycleEventObserver { _, event ->
@@ -171,6 +166,7 @@ fun App(
     // 剪切板检测后获取详情
     val comicRepository = remember { org.koin.core.context.GlobalContext.get().get<com.par9uet.jm.repository.ComicRepository>() }
     LaunchedEffect(clipboardDetectedComicId) {
+        if (isLocked) return@LaunchedEffect
         val id = clipboardDetectedComicId ?: return@LaunchedEffect
         clipboardDetectLoading = true
         val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -209,14 +205,34 @@ fun App(
         }
     }
 
-    // 启动加载动画：设置加载前或引导完成后的最短显示时间内显示加载页
+    // 应用锁优先级最高：锁定时不创建主界面、剪切板弹窗或加载页。
+    val showAppLock = settingsLoaded && localSetting.appLockEnabled && isLocked
+    if (showAppLock && !hasUnlockedOnce) {
+        AppLockScreen(
+            unlockMode = localSetting.appLockUnlockMode,
+            correctPassword = localSetting.appLockPassword,
+            correctPattern = localSetting.appLockPattern,
+            passwordLength = localSetting.appLockPasswordLength,
+            biometricEnabled = localSetting.appLockBiometricEnabled,
+            fingerprintEnabled = localSetting.appLockFingerprintEnabled,
+            faceEnabled = localSetting.appLockFaceEnabled,
+            unlockRule = localSetting.appLockUnlockRule,
+            requiredMethods = localSetting.appLockRequiredMethods,
+            onUnlock = {
+                isLocked = false
+                hasUnlockedOnce = true
+            },
+        )
+        return
+    }
+
+    // 无锁或完成解锁后再显示短暂加载过渡
     if (!settingsLoaded || (showLoadingScreen && !showOnboarding)) {
         LoadingScreen()
         return
     }
 
-    // 优先级：欢迎引导 > 应用锁 > NSFW 警告 > 主应用
-    val showAppLock = localSetting.appLockEnabled && isLocked && !showOnboarding
+    // 优先级：应用锁（上方已返回）> 欢迎引导 > NSFW 警告 > 主应用
     val showNsfwDialog = !showAppLock && !showOnboarding &&
             !sessionNsfwDismissed &&
             !localSetting.nsfwWarningDismissed
@@ -256,15 +272,7 @@ fun App(
                     .imePadding()
             )
         }
-        if (showAppLock) {
-            AppLockScreen(
-                unlockMode = localSetting.appLockUnlockMode,
-                correctPassword = localSetting.appLockPassword,
-                correctPattern = localSetting.appLockPattern,
-                passwordLength = localSetting.appLockPasswordLength,
-                onUnlock = { isLocked = false }
-            )
-        } else if (showNsfwDialog) {
+        if (showNsfwDialog) {
             NsfwWarningDialog(
                 onAccept = { dontShowAgain ->
                     if (dontShowAgain) localSettingManager.dismissNsfwWarning()
@@ -292,11 +300,8 @@ fun App(
                         horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp)
                     ) {
                         // 左侧封面小窗口
-                        coil.compose.AsyncImage(
-                            model = "${remoteSetting.imgHost}/media/albums/${detectedComic.id}_3x4.jpg",
-                            imageLoader = imageLoader,
-                            contentDescription = "${detectedComic.name}的封面",
-                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        ComicCoverImage(
+                            comic = detectedComic,
                             modifier = Modifier
                                 .width(96.dp)
                                 .height(128.dp)
@@ -355,6 +360,25 @@ fun App(
                         clipboardDetectedComicId = null
                     }) { androidx.compose.material3.Text("取消") }
                 }
+            )
+        }
+
+        // 已进入过应用后，锁屏作为最顶层不透明覆盖层保留；底层页面继续存活以接收 SAF 文件回调。
+        if (showAppLock) {
+            AppLockScreen(
+                unlockMode = localSetting.appLockUnlockMode,
+                correctPassword = localSetting.appLockPassword,
+                correctPattern = localSetting.appLockPattern,
+                passwordLength = localSetting.appLockPasswordLength,
+                biometricEnabled = localSetting.appLockBiometricEnabled,
+                fingerprintEnabled = localSetting.appLockFingerprintEnabled,
+                faceEnabled = localSetting.appLockFaceEnabled,
+                unlockRule = localSetting.appLockUnlockRule,
+                requiredMethods = localSetting.appLockRequiredMethods,
+                onUnlock = {
+                    isLocked = false
+                    hasUnlockedOnce = true
+                },
             )
         }
     }

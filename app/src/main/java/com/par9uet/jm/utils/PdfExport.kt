@@ -9,6 +9,9 @@ import android.provider.DocumentsContract
 import com.par9uet.jm.cache.getComicChapterDownloadDir
 import com.par9uet.jm.cache.getDownloadDir
 import com.par9uet.jm.cache.listComicImageFiles
+import com.par9uet.jm.cache.cachePathLength
+import com.par9uet.jm.cache.isDocumentCachePath
+import com.par9uet.jm.cache.listComicImagePaths
 import com.par9uet.jm.database.model.DownloadComic
 import java.io.File
 import java.io.FileOutputStream
@@ -23,6 +26,15 @@ data class CachedComicInfo(
 )
 
 fun getCachedComicInfo(context: Context, comic: DownloadComic): CachedComicInfo {
+    if (isDocumentCachePath(comic.zipPath)) {
+        val paths = listComicImagePaths(context, comic.zipPath)
+        return CachedComicInfo(
+            imageCount = paths.size,
+            totalBytes = paths.sumOf { cachePathLength(context, it) },
+            imageDir = null,
+            zipFile = null,
+        )
+    }
     val imageDir = getComicImageDir(context, comic)
     val imageFiles = imageDir?.let(::listComicImageFiles).orEmpty()
     val zipFile = comic.zipPath.takeIf { it.isNotBlank() }?.let(::File)?.takeIf { it.isFile && it.exists() }
@@ -40,9 +52,7 @@ fun exportComicToPdf(
     comic: DownloadComic,
     treeUri: Uri
 ): String {
-    val imageDir = getComicImageDir(context, comic)
-        ?: throw IllegalStateException("未找到本地缓存图片")
-    val imageFiles = listComicImageFiles(imageDir)
+    val imageFiles = getComicImagePaths(context, comic)
     if (imageFiles.isEmpty()) {
         throw IllegalStateException("未找到可导出的缓存图片")
     }
@@ -57,7 +67,7 @@ fun exportComicsToMergedPdf(
     treeUri: Uri
 ): String {
     val imageFiles = comics.flatMap { comic ->
-        getComicImageDir(context, comic)?.let(::listComicImageFiles).orEmpty()
+        getComicImagePaths(context, comic)
     }
     if (imageFiles.isEmpty()) {
         throw IllegalStateException("未找到可导出的缓存图片")
@@ -86,7 +96,7 @@ private fun writeImagesToPdf(
     context: Context,
     treeUri: Uri,
     fileName: String,
-    imageFiles: List<File>
+    imageFiles: List<String>
 ): String {
     val parentDocumentId = DocumentsContract.getTreeDocumentId(treeUri)
     val parentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, parentDocumentId)
@@ -102,9 +112,9 @@ private fun writeImagesToPdf(
         val document = PdfDocument()
         var pageIndex = 0
         try {
-            imageFiles.forEachIndexed { index, file ->
+            imageFiles.forEachIndexed { index, path ->
                 try {
-                    val bitmap = decodeBitmapForPdf(file.absolutePath)
+                    val bitmap = decodeBitmapForPdf(context, path)
                         ?: run {
                             failedPages.add(index + 1)
                             return@forEachIndexed
@@ -137,11 +147,11 @@ private fun writeImagesToPdf(
     return outputUri.toString()
 }
 
-private fun decodeBitmapForPdf(path: String): Bitmap? {
+private fun decodeBitmapForPdf(context: Context, path: String): Bitmap? {
     val boundsOptions = BitmapFactory.Options().apply {
         inJustDecodeBounds = true
     }
-    BitmapFactory.decodeFile(path, boundsOptions)
+    decodeBitmap(context, path, boundsOptions)
     val width = boundsOptions.outWidth
     val height = boundsOptions.outHeight
     if (width <= 0 || height <= 0) return null
@@ -151,8 +161,17 @@ private fun decodeBitmapForPdf(path: String): Bitmap? {
         inSampleSize = sampleSize
         inPreferredConfig = Bitmap.Config.RGB_565
     }
-    return BitmapFactory.decodeFile(path, options)
+    return decodeBitmap(context, path, options)
 }
+
+private fun decodeBitmap(context: Context, path: String, options: BitmapFactory.Options): Bitmap? =
+    if (isDocumentCachePath(path)) {
+        context.contentResolver.openInputStream(Uri.parse(path))?.use {
+            BitmapFactory.decodeStream(it, null, options)
+        }
+    } else {
+        BitmapFactory.decodeFile(path, options)
+    }
 
 private fun calculateSampleSize(width: Int, height: Int): Int {
     var sampleSize = 1
@@ -195,6 +214,14 @@ private fun getComicImageDir(context: Context, comic: DownloadComic): File? {
         }
     }
     return dir.takeIf { it.exists() }
+}
+
+private fun getComicImagePaths(context: Context, comic: DownloadComic): List<String> {
+    if (isDocumentCachePath(comic.zipPath)) {
+        return listComicImagePaths(context, comic.zipPath)
+    }
+    return getComicImageDir(context, comic)?.let(::listComicImageFiles).orEmpty()
+        .map(File::getAbsolutePath)
 }
 
 private fun safeFileName(name: String): String {

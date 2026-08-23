@@ -1,7 +1,10 @@
 package com.par9uet.jm.repository.impl
 
+import android.os.Build
 import com.par9uet.jm.storage.CookieStorage
+import com.par9uet.jm.network.DohManager
 import com.par9uet.jm.utils.log
+import com.par9uet.jm.utils.applyTlsCompat
 import io.github.jukomu.jmcomic.api.enums.ClientType
 import io.github.jukomu.jmcomic.core.client.impl.JmApiClient
 import io.github.jukomu.jmcomic.core.config.JmConfiguration
@@ -21,7 +24,20 @@ import java.time.Duration
  */
 class EmbeddedClientManager(
     private val cookieStorage: CookieStorage,
+    private val dohManager: DohManager,
 ) {
+    /** Android 6 fallback list; Android 7+ can use the library's dynamic list. */
+    private val androidCompatibleApiDomains = listOf(
+        "www.cdnaspa.vip",
+        "www.cdnaspa.club",
+        "www.cdnplaystation6.org",
+        "www.cdnplaystation6.vip",
+        "www.cdnplaystation6.cc",
+    )
+
+    @Volatile
+    private var favoriteOrder: String = "mr"
+
     @Volatile
     private var client: JmApiClient? = null
 
@@ -31,27 +47,47 @@ class EmbeddedClientManager(
         }
     }
 
+    fun setFavoriteOrder(order: String) {
+        favoriteOrder = order
+    }
+
     private fun createClient(): JmApiClient {
-        val config = JmConfiguration.Builder()
+        val legacyAndroid = Build.VERSION.SDK_INT <= Build.VERSION_CODES.M
+        val configBuilder = JmConfiguration.Builder()
             .clientType(ClientType.API)
             .timeout(Duration.ofSeconds(20))
             .imageTimeout(Duration.ofSeconds(60))
             .downloadThreadPoolSize(2)
             .domainProbeTimeoutMs(3000)
-            .build()
+        if (legacyAndroid) {
+            // Android 6 lacks the platform Java 9/CompletableFuture surface used
+            // by the library's dynamic domain bootstrap. Desugaring still lets
+            // requests run, but explicit domains avoid the fragile bootstrap.
+            configBuilder.apiDomains(androidCompatibleApiDomains)
+        }
+        val config = configBuilder.build()
         val context = OkHttpBuilder.build(config)
         val domainManager = context.domainManager
         val clientWithCookieInjection = context.client.newBuilder()
+            .dns(dohManager)
+            .applyTlsCompat()
             .addInterceptor { chain ->
                 val cookies = cookieStorage.get()
-                val request = if (cookies.isNotEmpty()) {
-                    val cookieHeader = cookies.joinToString("; ") { "${it.name}=${it.value}" }
-                    chain.request().newBuilder()
-                        .header("Cookie", cookieHeader)
-                        .build()
-                } else {
-                    chain.request()
+                val original = chain.request()
+                val requestBuilder = original.newBuilder()
+                if (original.url.encodedPath.endsWith("/favorite")) {
+                    requestBuilder.url(
+                        original.url.newBuilder()
+                            .setQueryParameter("o", favoriteOrder)
+                            .build()
+                    )
                 }
+                if (cookies.isNotEmpty()) {
+                    val cookieHeader = cookies.joinToString("; ") { "${it.name}=${it.value}" }
+                    requestBuilder
+                        .header("Cookie", cookieHeader)
+                }
+                val request = requestBuilder.build()
                 val response = chain.proceed(request)
                 // 从响应头提取 Set-Cookie，同步到 cookieStorage，保证登录态持久化
                 val setCookieHeaders = response.headers("Set-Cookie")
@@ -70,21 +106,24 @@ class EmbeddedClientManager(
             .build()
         val jmClient = JmApiClient(config, clientWithCookieInjection, context.cookieManager, domainManager)
 
-        // 守护线程：域名探活初始化超时后强制解除阻塞，避免 Android 6 上永久卡死
-        Thread({
-            try {
-                // 等待 8 秒让域名探活完成
-                Thread.sleep(8000)
-                if (!domainManager.isInitialized) {
-                    log("EmbeddedClientManager: 域名探活初始化超时，强制解除阻塞")
-                    domainManager.setInitialized(true)
+        if (legacyAndroid) {
+            // Android 6 only: domain probing can block on the desugared
+            // CompletableFuture/ForkJoin implementation. Newer Android keeps
+            // the library's normal probing and retry behavior.
+            Thread({
+                try {
+                    Thread.sleep(8000)
+                    if (!domainManager.isInitialized) {
+                        log("EmbeddedClientManager: 域名探活初始化超时，强制解除阻塞")
+                        domainManager.setInitialized(true)
+                    }
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
                 }
-            } catch (e: InterruptedException) {
-                // 忽略
+            }, "embedded-domain-init-guard").apply {
+                isDaemon = true
+                start()
             }
-        }, "embedded-domain-init-guard").apply {
-            isDaemon = true
-            start()
         }
 
         return jmClient

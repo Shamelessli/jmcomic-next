@@ -26,11 +26,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Backspace
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -50,11 +53,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.par9uet.jm.data.models.APP_LOCK_TYPE_PASSWORD
 import com.par9uet.jm.data.models.APP_LOCK_TYPE_PATTERN
+import com.par9uet.jm.data.models.APP_LOCK_METHOD_BIOMETRIC
+import com.par9uet.jm.data.models.APP_LOCK_RULE_REQUIRED
+import com.par9uet.jm.utils.authenticateWithBiometrics
+import com.par9uet.jm.utils.canUseBiometricAuth
+import com.par9uet.jm.utils.findFragmentActivity
 import kotlinx.coroutines.launch
 import kotlin.math.hypot
 
@@ -77,10 +86,47 @@ fun AppLockScreen(
     correctPassword: String,
     correctPattern: String,
     passwordLength: Int,
+    biometricEnabled: Boolean,
+    fingerprintEnabled: Boolean,
+    faceEnabled: Boolean,
+    unlockRule: String,
+    requiredMethods: List<String>,
     onUnlock: () -> Unit
 ) {
-    // both 模式下记录是否已通过密码步骤
-    var passwordStepDone by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val activity = remember(context) { context.findFragmentActivity() }
+    val canUseBiometric = (biometricEnabled || fingerprintEnabled || faceEnabled) &&
+        activity != null && canUseBiometricAuth(context)
+    val enabledMethods = remember(correctPassword, correctPattern, canUseBiometric) {
+        buildList {
+            if (correctPassword.isNotBlank()) add(APP_LOCK_TYPE_PASSWORD)
+            if (correctPattern.isNotBlank()) add(APP_LOCK_TYPE_PATTERN)
+            if (canUseBiometric) add(APP_LOCK_METHOD_BIOMETRIC)
+        }
+    }
+    val methodsToPass = remember(unlockRule, requiredMethods, enabledMethods, unlockMode) {
+        if (unlockRule == APP_LOCK_RULE_REQUIRED) {
+            requiredMethods.filter { it in enabledMethods }.ifEmpty {
+                if (unlockMode == APP_LOCK_UNLOCK_MODE_BOTH) {
+                    listOf(APP_LOCK_TYPE_PASSWORD, APP_LOCK_TYPE_PATTERN).filter { it in enabledMethods }
+                } else enabledMethods
+            }
+        } else enabledMethods
+    }
+    val completedMethods = remember { mutableStateListOf<String>() }
+    var selectedMethod by remember(methodsToPass) {
+        mutableStateOf(methodsToPass.firstOrNull { it != APP_LOCK_METHOD_BIOMETRIC } ?: APP_LOCK_METHOD_BIOMETRIC)
+    }
+
+    fun completeMethod(method: String) {
+        if (unlockRule != APP_LOCK_RULE_REQUIRED) {
+            onUnlock()
+            return
+        }
+        if (method !in completedMethods) completedMethods += method
+        val remaining = methodsToPass.filter { it !in completedMethods }
+        if (remaining.isEmpty()) onUnlock() else selectedMethod = remaining.first()
+    }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -122,33 +168,71 @@ fun AppLockScreen(
                 }
                 Spacer(modifier = Modifier.height(16.dp))
 
-                val effectiveMode = when {
-                    // both 模式下，密码步骤未完成则先显示密码，否则显示图案
-                    unlockMode == APP_LOCK_UNLOCK_MODE_BOTH && !passwordStepDone -> APP_LOCK_TYPE_PASSWORD
-                    unlockMode == APP_LOCK_UNLOCK_MODE_BOTH && passwordStepDone -> APP_LOCK_TYPE_PATTERN
-                    unlockMode == APP_LOCK_UNLOCK_MODE_PATTERN -> APP_LOCK_TYPE_PATTERN
-                    else -> APP_LOCK_TYPE_PASSWORD
+                Text(
+                    text = if (unlockRule == APP_LOCK_RULE_REQUIRED) {
+                        "需通过 ${methodsToPass.size} 项验证（已完成 ${completedMethods.size} 项）"
+                    } else "通过任一已启用方式即可解锁",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                if (APP_LOCK_METHOD_BIOMETRIC in methodsToPass && APP_LOCK_METHOD_BIOMETRIC !in completedMethods) {
+                    FilledTonalButton(
+                        onClick = {
+                            authenticateWithBiometrics(
+                                activity = activity!!,
+                                title = "解锁 JM",
+                                subtitle = "由系统验证已录入的${when {
+                                    fingerprintEnabled && faceEnabled -> "指纹或面容"
+                                    faceEnabled -> "面容"
+                                    else -> "指纹"
+                                }}",
+                                onSuccess = { completeMethod(APP_LOCK_METHOD_BIOMETRIC) },
+                            )
+                        }
+                    ) {
+                        Icon(Icons.Rounded.Fingerprint, contentDescription = null)
+                        Spacer(modifier = Modifier.size(8.dp))
+                        Text(when {
+                            fingerprintEnabled && faceEnabled -> "使用指纹或面容"
+                            faceEnabled -> "使用面容"
+                            else -> "使用指纹"
+                        })
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
 
-                if (effectiveMode == APP_LOCK_TYPE_PATTERN) {
+                val inputMethods = methodsToPass.filter {
+                    it != APP_LOCK_METHOD_BIOMETRIC && it !in completedMethods
+                }
+                if (inputMethods.size > 1) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        inputMethods.forEach { method ->
+                            FilterChip(
+                                selected = selectedMethod == method,
+                                onClick = { selectedMethod = method },
+                                label = { Text(if (method == APP_LOCK_TYPE_PASSWORD) "密码" else "图形") },
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+                val activeInputMethod = selectedMethod.takeIf { it in inputMethods }
+                    ?: inputMethods.firstOrNull()
+
+                if (activeInputMethod == APP_LOCK_TYPE_PATTERN) {
                     PatternLockInput(
                         title = "请绘制图案",
                         correctPassword = correctPattern,
-                        onUnlock = onUnlock
+                        onUnlock = { completeMethod(APP_LOCK_TYPE_PATTERN) }
                     )
-                } else {
+                } else if (activeInputMethod == APP_LOCK_TYPE_PASSWORD) {
                     PasswordLockInput(
                         title = "请输入密码",
                         correctPassword = correctPassword,
                         passwordLength = passwordLength,
-                        onUnlock = {
-                            if (unlockMode == APP_LOCK_UNLOCK_MODE_BOTH) {
-                                // 进入图案步骤
-                                passwordStepDone = true
-                            } else {
-                                onUnlock()
-                            }
-                        }
+                        onUnlock = { completeMethod(APP_LOCK_TYPE_PASSWORD) }
                     )
                 }
             }

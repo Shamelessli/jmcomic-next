@@ -12,6 +12,10 @@ import com.par9uet.jm.data.models.ComicChapter
 import com.par9uet.jm.database.dao.DownloadComicDao
 import com.par9uet.jm.database.model.DownloadComic
 import com.par9uet.jm.worker.DownloadComicWorker
+import com.par9uet.jm.cache.cachePathExists
+import com.par9uet.jm.cache.deleteCachePath
+import com.par9uet.jm.cache.listComicImagePaths
+import com.par9uet.jm.cache.CacheIntegrityResult
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -126,7 +130,12 @@ class DownloadManager(
         enqueueDownloads(listOf(comicId))
     }
 
-    private fun enqueueDownloads(comicIds: List<Int>) {
+    private fun enqueueDownloads(
+        comicIds: List<Int>,
+        downloadCover: Boolean = true,
+        downloadPages: Boolean = true,
+        writeConfig: Boolean = true,
+    ) {
         if (comicIds.isEmpty()) return
         val distinctComicIds = comicIds.distinct()
         val batchId = if (distinctComicIds.size > 1) UUID.randomUUID().toString() else ""
@@ -142,6 +151,9 @@ class DownloadManager(
                         "comicId" to comicId,
                         "batchId" to batchId,
                         "batchTotal" to distinctComicIds.size
+                        ,"downloadCover" to downloadCover
+                        ,"downloadPages" to downloadPages
+                        ,"writeConfig" to writeConfig
                     )
                 )
                 .setBackoffCriteria(
@@ -205,23 +217,158 @@ class DownloadManager(
         }
     }
 
+    suspend fun deleteCachedItems(ids: Collection<Int>): Int {
+        val selectedIds = ids.distinct()
+        if (selectedIds.isEmpty()) return 0
+        val selected = mutableListOf<DownloadComic>()
+        for (id in selectedIds) {
+            downloadComicDao.getById(id)?.let(selected::add)
+        }
+        var deletedCount = 0
+        selected.groupBy { it.groupId.takeIf { id -> id != 0 } ?: it.id }.forEach { (groupId, groupItems) ->
+            val allGroupItems = downloadComicDao.getByGroupId(groupId)
+            val deletingWholeGroup = allGroupItems.all { item -> item.id in selectedIds }
+            val groupCoverPaths = groupItems.map { it.coverPath }.filter(String::isNotBlank).distinct()
+            groupItems.forEach { item ->
+                val zipDeleted = item.zipPath.isBlank() || !cachePathExists(context, item.zipPath) || deleteCachePath(context, item.zipPath)
+                if (zipDeleted) {
+                    downloadComicDao.delete(item)
+                    deletedCount++
+                }
+            }
+            if (deletingWholeGroup) {
+                groupCoverPaths.forEach { path ->
+                    if (cachePathExists(context, path)) deleteCachePath(context, path)
+                }
+            }
+        }
+        return deletedCount
+    }
+
+    fun redownloadMissing(groupId: Int) {
+        scope.launch(Dispatchers.IO) {
+            val items = downloadComicDao.getByGroupId(groupId)
+            val missing = items.filter { item ->
+                item.status == "complete" && (
+                    item.zipPath.isBlank() ||
+                        !cachePathExists(context, item.zipPath) ||
+                        runCatching { listComicImagePaths(context, item.zipPath).isEmpty() }.getOrDefault(true)
+                    )
+            }
+            if (missing.isEmpty()) {
+                toastManager.showAsync("本地缓存文件完整")
+                return@launch
+            }
+            missing.forEach { item ->
+                if (item.zipPath.isNotBlank() && cachePathExists(context, item.zipPath)) deleteCachePath(context, item.zipPath)
+                downloadComicDao.updateStatus(com.par9uet.jm.database.model.UpdateComicStatus(item.id, "pending"))
+                downloadComicDao.updateProgress(com.par9uet.jm.database.model.UpdateComicProgress(item.id, 0f))
+            }
+            enqueueDownloads(missing.map { it.id })
+            toastManager.showAsync("已重新下载 ${missing.size} 个缺失章节")
+        }
+    }
+
+    fun repairCachedItems(result: CacheIntegrityResult) {
+        val taskIds = (result.brokenChapterIds + result.chapterIds).distinct()
+        if (taskIds.isEmpty()) return
+        scope.launch(Dispatchers.IO) {
+            val tasks = mutableListOf<DownloadComic>()
+            for (id in taskIds) {
+                downloadComicDao.getById(id)?.let(tasks::add)
+            }
+            if (tasks.isEmpty()) return@launch
+            val needsPages = tasks.associate { it.id to (it.id in result.brokenChapterIds) }
+            val owner = tasks.minByOrNull { it.createTime }?.id
+            // A missing cover/JSON belongs to the comic, while broken pages belong
+            // to individual chapters. Do not enqueue every chapter for metadata-only
+            // repairs; that used to create needless worker runs and could look like a
+            // full comic re-download.
+            val repairIds = buildList {
+                if (owner != null && (result.missingCover || result.missingConfig)) add(owner)
+                addAll(result.brokenChapterIds)
+            }.distinct()
+            if (repairIds.isEmpty()) return@launch
+            repairIds.forEach { id ->
+                val item = tasks.firstOrNull { it.id == id } ?: return@forEach
+                downloadComicDao.updateStatus(com.par9uet.jm.database.model.UpdateComicStatus(item.id, "pending"))
+                // A repair must start from a visible, indeterminate-looking
+                // zero state. Keeping 100% from the previous complete row
+                // makes a missing-page repair appear frozen at 0 KB/100%.
+                if (id in result.brokenChapterIds) {
+                    downloadComicDao.updateProgress(
+                        com.par9uet.jm.database.model.UpdateComicProgress(item.id, 0f)
+                    )
+                }
+            }
+            val requests = repairIds.distinct().map { id ->
+                val isOwner = id == owner
+                DownloadRepairRequest(
+                    comicId = id,
+                    downloadCover = result.missingCover && isOwner,
+                    downloadPages = needsPages[id] == true,
+                    writeConfig = result.missingConfig && isOwner,
+                    missingPageIndices = result.missingPagesByChapter[id]
+                        .orEmpty()
+                        .map { it - 1 }
+                        .filter { it >= 0 }
+                        .toIntArray(),
+                )
+            }
+            enqueueRepairRequests(requests)
+            val parts = buildList {
+                if (result.missingCover) add("封面")
+                if (result.missingConfig) add("JSON")
+                if (result.brokenChapterIds.isNotEmpty()) add("缺失页")
+            }
+            toastManager.showAsync("仅补齐：${parts.joinToString("、")}")
+        }
+    }
+
+    @Deprecated("Use repairCachedItems(CacheIntegrityResult) to avoid redownloading complete comics")
+    fun repairCachedItems(ids: Collection<Int>) =
+        repairCachedItems(CacheIntegrityResult(brokenChapterIds = ids.toSet()))
+
+    private data class DownloadRepairRequest(
+        val comicId: Int,
+        val downloadCover: Boolean,
+        val downloadPages: Boolean,
+        val writeConfig: Boolean,
+        val missingPageIndices: IntArray = intArrayOf(),
+    )
+
+    private fun enqueueRepairRequests(requests: List<DownloadRepairRequest>) {
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+        val workManager = WorkManager.getInstance(context)
+        requests.forEach { request ->
+            val work = OneTimeWorkRequestBuilder<DownloadComicWorker>()
+                .setConstraints(constraints)
+                .setInputData(
+                    workDataOf(
+                        "comicId" to request.comicId,
+                        "batchId" to "",
+                        "batchTotal" to requests.size,
+                        "downloadCover" to request.downloadCover,
+                        "downloadPages" to request.downloadPages,
+                        "writeConfig" to request.writeConfig,
+                        "missingPageIndices" to request.missingPageIndices,
+                    )
+                )
+                .setBackoffCriteria(BackoffPolicy.LINEAR, DOWNLOAD_RETRY_BACKOFF_SECONDS, TimeUnit.SECONDS)
+                .build()
+            workManager.enqueue(work)
+        }
+    }
+
     fun redownloadGroup(groupId: Int) {
         scope.launch(Dispatchers.IO) {
             val items = downloadComicDao.getByGroupId(groupId)
             if (items.isEmpty()) return@launch
             items.forEach { item ->
-                runCatching {
-                    val zipFile = java.io.File(item.zipPath)
-                    if (zipFile.exists()) {
-                        if (zipFile.isDirectory) {
-                            zipFile.deleteRecursively()
-                        } else {
-                            zipFile.delete()
-                        }
-                    }
-                }
-                val coverFile = java.io.File(item.coverPath)
-                if (coverFile.exists()) coverFile.delete()
+                if (item.zipPath.isNotBlank() && cachePathExists(context, item.zipPath)) deleteCachePath(context, item.zipPath)
+                if (item.coverPath.isNotBlank() && cachePathExists(context, item.coverPath)) deleteCachePath(context, item.coverPath)
                 downloadComicDao.updateStatus(
                     com.par9uet.jm.database.model.UpdateComicStatus(item.id, "pending")
                 )

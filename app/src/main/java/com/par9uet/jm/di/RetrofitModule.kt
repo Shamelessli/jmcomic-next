@@ -25,6 +25,7 @@ val retrofitModule = module {
             get(),
             get(),
             get(),
+            get(),
             get()
         )
     } bind AppInitTask::class

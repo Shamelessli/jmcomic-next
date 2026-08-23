@@ -20,11 +20,15 @@ class LocalSettingManager(
     private val localSettingStorage: LocalSettingStorage,
     private val launcherDisguiseApplier: LauncherDisguiseApplier,
 ) : AppInitTask {
+    @Volatile private var initialized = false
     private val _localSettingState = MutableStateFlow(LocalSetting())
     val localSettingState = _localSettingState.asStateFlow()
 
     fun updateComicApiSource(comicApiSource: String) =
         updateSetting { it.copy(comicApiSource = comicApiSource) }
+
+    fun updateDownloadTreeUri(uri: String) =
+        updateSetting { it.copy(downloadTreeUri = uri) }
 
     fun updatePreferenceRecommendEnabled(enabled: Boolean) =
         updateSetting { it.copy(preferenceRecommendEnabled = enabled) }
@@ -42,6 +46,30 @@ class LocalSettingManager(
         updateSetting { it.copy(recommendSource = source) }
 
     fun updateApi(api: String) = updateSetting { it.copy(api = api) }
+
+    fun updateDohEnabled(enabled: Boolean) =
+        updateSetting { it.copy(dohEnabled = enabled) }
+
+    fun updateDohAutoStart(enabled: Boolean) =
+        updateSetting { it.copy(dohAutoStart = enabled) }
+
+    fun updateDohServer(id: String) =
+        updateSetting { it.copy(dohServerId = id) }
+
+    fun updateDohCustomServer(name: String, url: String) =
+        updateSetting {
+            it.copy(
+                dohServerId = "custom",
+                dohCustomServerName = name.trim(),
+                dohCustomServerUrl = url.trim(),
+            )
+        }
+
+    fun updateDohUseDeviceCertificates(enabled: Boolean) =
+        updateSetting { it.copy(dohUseDeviceCertificates = enabled) }
+
+    fun updateDohPreferIpv6(enabled: Boolean) =
+        updateSetting { it.copy(dohPreferIpv6 = enabled) }
 
     fun updateTheme(theme: String) = updateSetting { it.copy(theme = theme) }
 
@@ -80,6 +108,9 @@ class LocalSettingManager(
 
     fun updateShowComicCacheNotificationName(show: Boolean) =
         updateSetting { it.copy(showComicCacheNotificationName = show) }
+
+    fun updateShowCacheMigrationNotification(show: Boolean) =
+        updateSetting { it.copy(showCacheMigrationNotification = show) }
 
     fun updateShowAiEntry(show: Boolean) =
         updateSetting { it.copy(showAiEntry = show) }
@@ -155,6 +186,21 @@ class LocalSettingManager(
     fun updateAppLockUnlockMode(mode: String) =
         updateSetting { it.copy(appLockUnlockMode = mode) }
 
+    fun updateAppLockBiometricEnabled(enabled: Boolean) =
+        updateSetting { it.copy(appLockBiometricEnabled = enabled) }
+
+    fun updateAppLockFingerprintEnabled(enabled: Boolean) =
+        updateSetting { it.copy(appLockFingerprintEnabled = enabled, appLockBiometricEnabled = enabled || it.appLockFaceEnabled) }
+
+    fun updateAppLockFaceEnabled(enabled: Boolean) =
+        updateSetting { it.copy(appLockFaceEnabled = enabled, appLockBiometricEnabled = enabled || it.appLockFingerprintEnabled) }
+
+    fun updateAppLockUnlockRule(rule: String) =
+        updateSetting { it.copy(appLockUnlockRule = rule) }
+
+    fun updateAppLockRequiredMethods(methods: List<String>) =
+        updateSetting { it.copy(appLockRequiredMethods = methods.distinct()) }
+
     fun updateColorPalettePreset(preset: String) =
         updateSetting { it.copy(colorPalettePreset = preset) }
 
@@ -195,14 +241,23 @@ class LocalSettingManager(
     fun updateReadDecodeConcurrency(concurrency: Int) =
         updateSetting { it.copy(readDecodeConcurrency = concurrency.coerceIn(1, 4)) }
 
+    fun updateCacheIntegrityCheckMode(mode: String) =
+        updateSetting {
+            it.copy(
+                cacheIntegrityCheckMode = mode.takeIf { value ->
+                    value in setOf("off", "partial", "full")
+                } ?: "off"
+            )
+        }
+
     /**
      * 应用从备份恢复的 [LocalSetting]。
      *
      * 备份中已剥离 appLockPassword 与 appLockPattern 明文，因此恢复时保留当前设备的应用锁
-     * 相关字段（enabled/password/length/pattern/unlockMode），避免恢复后应用锁状态异常。
+     * 相关字段（enabled/password/length/pattern/unlockMode/biometric），避免恢复后应用锁状态异常。
      * 若恢复导致 launcherDisguise 变化，会重新应用伪装图标。
      */
-    fun applyLocalSetting(setting: LocalSetting) {
+    fun applyLocalSetting(setting: LocalSetting, includeDownloadPath: Boolean = true) {
         val previousLauncherDisguise = _localSettingState.value.launcherDisguise
         updateSetting { current ->
             setting.copy(
@@ -211,6 +266,12 @@ class LocalSettingManager(
                 appLockPasswordLength = current.appLockPasswordLength,
                 appLockPattern = current.appLockPattern,
                 appLockUnlockMode = current.appLockUnlockMode,
+                appLockBiometricEnabled = current.appLockBiometricEnabled,
+                appLockFingerprintEnabled = current.appLockFingerprintEnabled,
+                appLockFaceEnabled = current.appLockFaceEnabled,
+                appLockUnlockRule = current.appLockUnlockRule,
+                appLockRequiredMethods = current.appLockRequiredMethods,
+                downloadTreeUri = if (includeDownloadPath) setting.downloadTreeUri else current.downloadTreeUri,
             )
         }
         val newLauncherDisguise = _localSettingState.value.launcherDisguise
@@ -234,15 +295,18 @@ class LocalSettingManager(
 
     private var appTaskInfo = AppTaskInfo(
         taskName = "load local app settings",
-        sort = 3,
+        // All network interceptors read this state, so load it before remote settings.
+        sort = 0,
     )
 
     override suspend fun init() {
+        if (initialized) return
         log("local app settings init start")
         _localSettingState.update {
             localSettingStorage.get()
         }
         launcherDisguiseApplier.apply(LauncherDisguise.fromId(_localSettingState.value.launcherDisguise))
+        initialized = true
         log("local app settings init finished")
     }
 

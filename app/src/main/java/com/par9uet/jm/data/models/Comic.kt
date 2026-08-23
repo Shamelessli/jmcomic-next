@@ -23,6 +23,8 @@ data class Comic(
     // 话数
     val comicChapterList: List<ComicChapter> = listOf(),
     val seriesId: String = "",
+    // API-provided cover URL used when remote image settings are unavailable.
+    val coverUrl: String = "",
     // 价格
     val price: Int,
     // 是否购买
@@ -33,6 +35,7 @@ data class Comic(
             id: Int,
             name: String,
             authorList: List<String>,
+            coverUrl: String = "",
         ): Comic {
             return Comic(
                 id = id,
@@ -50,6 +53,7 @@ data class Comic(
                 relateComicList = listOf(),
                 comicChapterList = listOf(),
                 seriesId = "",
+                coverUrl = coverUrl,
                 price = 0,
                 isBuy = false,
             )

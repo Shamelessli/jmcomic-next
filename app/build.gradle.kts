@@ -17,6 +17,9 @@ val versionProps = Properties().apply {
 val versionCodeProp = versionProps.getProperty("VERSION_CODE", "1").toIntOrNull()
 val versionNameProp: String = versionProps.getProperty("VERSION_NAME", "1.1.0")
 
+// Secrets are supplied through untracked Gradle properties or CI variables.
+fun secretProperty(name: String): String = providers.gradleProperty(name).orNull.orEmpty()
+
 fun getGitHash() = providers
     .exec {
         commandLine("git", "rev-parse", "--short", "HEAD")
@@ -59,6 +62,8 @@ android {
         targetSdk = 35
         versionCode = versionCodeProp
         versionName = versionNameProp
+        buildConfigField("String", "JM_BUILTIN_TOKEN_SECRET", "\"${secretProperty("JM_BUILTIN_TOKEN_SECRET")}\"")
+        buildConfigField("String", "JM_APP_DATA_SECRET", "\"${secretProperty("JM_APP_DATA_SECRET")}\"")
 
         // testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -84,6 +89,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources {
@@ -102,6 +108,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.biometric)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.ui)
     implementation(libs.androidx.ui.graphics)

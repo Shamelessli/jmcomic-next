@@ -4,6 +4,9 @@ import com.google.gson.JsonParser
 import com.google.gson.reflect.TypeToken
 import com.par9uet.jm.data.models.APP_LOCK_TYPE_PASSWORD
 import com.par9uet.jm.data.models.APP_LOCK_TYPE_PATTERN
+import com.par9uet.jm.data.models.APP_LOCK_METHOD_BIOMETRIC
+import com.par9uet.jm.data.models.APP_LOCK_RULE_ANY
+import com.par9uet.jm.data.models.APP_LOCK_RULE_REQUIRED
 import com.par9uet.jm.data.models.BlockedTagTemplate
 import com.par9uet.jm.data.models.COLOR_PALETTE_PRESET_DEFAULT
 import com.par9uet.jm.data.models.COMIC_API_SOURCE_BUILTIN
@@ -111,6 +114,26 @@ class LocalSettingStorage(
                         ""
                     },
                     appLockUnlockMode = migratedUnlockMode,
+                    appLockFingerprintEnabled = if (savedJson.hasField("appLockFingerprintEnabled")) {
+                        saved.appLockFingerprintEnabled
+                    } else {
+                        saved.appLockBiometricEnabled
+                    },
+                    appLockFaceEnabled = if (savedJson.hasField("appLockFaceEnabled")) {
+                        saved.appLockFaceEnabled
+                    } else false,
+                    appLockUnlockRule = if (savedJson.hasField("appLockUnlockRule")) {
+                        saved.appLockUnlockRule
+                    } else if (migratedUnlockMode == "both") {
+                        APP_LOCK_RULE_REQUIRED
+                    } else APP_LOCK_RULE_ANY,
+                    appLockRequiredMethods = if (savedJson.hasField("appLockRequiredMethods")) {
+                        saved.appLockRequiredMethods.filter {
+                            it in setOf(APP_LOCK_TYPE_PASSWORD, APP_LOCK_TYPE_PATTERN, APP_LOCK_METHOD_BIOMETRIC)
+                        }
+                    } else if (migratedUnlockMode == "both") {
+                        listOf(APP_LOCK_TYPE_PASSWORD, APP_LOCK_TYPE_PATTERN)
+                    } else emptyList(),
                     colorPalettePreset = if (savedJson.hasField("colorPalettePreset")) {
                         saved.colorPalettePreset
                     } else {
@@ -135,7 +158,30 @@ class LocalSettingStorage(
                         saved.customColorError
                     } else {
                         null
-                    }
+                    },
+                    dohEnabled = if (savedJson.hasField("dohEnabled")) saved.dohEnabled else false,
+                    dohAutoStart = if (savedJson.hasField("dohAutoStart")) saved.dohAutoStart else false,
+                    dohServerId = if (savedJson.hasField("dohServerId")) {
+                        saved.dohServerId.takeIf { it.isNotBlank() } ?: "tencent"
+                    } else {
+                        "tencent"
+                    },
+                    dohCustomServerName = if (savedJson.hasField("dohCustomServerName")) {
+                        saved.dohCustomServerName.orEmpty()
+                    } else {
+                        ""
+                    },
+                    dohCustomServerUrl = if (savedJson.hasField("dohCustomServerUrl")) {
+                        saved.dohCustomServerUrl.orEmpty()
+                    } else {
+                        ""
+                    },
+                    dohUseDeviceCertificates = if (savedJson.hasField("dohUseDeviceCertificates")) {
+                        saved.dohUseDeviceCertificates
+                    } else {
+                        true
+                    },
+                    dohPreferIpv6 = if (savedJson.hasField("dohPreferIpv6")) saved.dohPreferIpv6 else false,
                 )
             }
         }

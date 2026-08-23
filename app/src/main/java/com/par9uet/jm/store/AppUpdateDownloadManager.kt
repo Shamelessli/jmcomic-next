@@ -2,6 +2,8 @@ package com.par9uet.jm.store
 
 import android.content.Context
 import com.par9uet.jm.cache.getCommonCacheDir
+import com.par9uet.jm.network.DohManager
+import com.par9uet.jm.utils.applyTlsCompat
 import com.par9uet.jm.utils.APP_UPDATE_NOTIFICATION_ID
 import com.par9uet.jm.utils.cancelProgressNotification
 import com.par9uet.jm.utils.showProgressNotification
@@ -49,9 +51,13 @@ data class AppUpdateDownloadState(
 class AppUpdateDownloadManager(
     private val context: Context,
     private val scope: CoroutineScope,
-    private val toastManager: ToastManager
+    private val toastManager: ToastManager,
+    private val dohManager: DohManager,
 ) {
-    private val client = OkHttpClient()
+    private val client = OkHttpClient.Builder()
+        .dns(dohManager)
+        .applyTlsCompat()
+        .build()
     private var job: Job? = null
     private var paused = false
     private var canceled = false

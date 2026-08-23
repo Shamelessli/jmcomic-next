@@ -37,12 +37,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.ImageLoader
 import coil.compose.AsyncImage
+import android.net.Uri
+import com.par9uet.jm.cache.cachePathExists
+import com.par9uet.jm.cache.cachePathHasContent
+import com.par9uet.jm.cache.isDocumentCachePath
 import com.par9uet.jm.ui.viewModel.DownloadComicGroup
 import com.par9uet.jm.utils.shimmer
 import org.koin.compose.getKoin
@@ -55,9 +60,15 @@ private fun GroupCoverImage(
     modifier: Modifier = Modifier,
     imageLoader: ImageLoader = getKoin().get()
 ) {
-    if (coverPath.isNotBlank()) {
+    val context = LocalContext.current
+    val coverModel = coverPath.takeIf {
+        cachePathExists(context, it) && cachePathHasContent(context, it)
+    }?.let { path ->
+        if (isDocumentCachePath(path)) Uri.parse(path) else File(path)
+    }
+    if (coverModel != null) {
         AsyncImage(
-            model = File(coverPath),
+            model = coverModel,
             imageLoader = imageLoader,
             contentDescription = "$title 的封面",
             contentScale = ContentScale.Crop,
@@ -238,6 +249,15 @@ private fun DownloadStateBlock(
                     progress = { animatedProgress },
                     modifier = Modifier.size(30.dp)
                 )
+                if (group.progressMessage.isNotBlank()) {
+                    Text(
+                        text = group.progressMessage,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 Text(
                     text = "${(animatedProgress * 100).toInt()}%",
                     style = MaterialTheme.typography.labelSmall
@@ -251,7 +271,7 @@ private fun DownloadStateBlock(
                     tint = MaterialTheme.colorScheme.error
                 )
                 Text(
-                    text = "出错",
+                    text = group.progressMessage.ifBlank { "出错" },
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.labelSmall
                 )

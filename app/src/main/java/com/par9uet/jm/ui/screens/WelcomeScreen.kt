@@ -4,6 +4,7 @@ import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -13,26 +14,34 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ContentPaste
+import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.Fingerprint
+import androidx.compose.material.icons.rounded.Face
 import androidx.compose.material.icons.rounded.Login
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Recommend
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material.icons.rounded.WavingHand
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -40,6 +49,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -47,24 +57,38 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.par9uet.jm.data.models.APP_LOCK_TYPE_PASSWORD
 import com.par9uet.jm.data.models.APP_LOCK_TYPE_PATTERN
+import com.par9uet.jm.data.models.APP_LOCK_METHOD_BIOMETRIC
+import com.par9uet.jm.data.models.APP_LOCK_RULE_ANY
+import com.par9uet.jm.data.models.APP_LOCK_RULE_REQUIRED
+import com.par9uet.jm.data.models.CACHE_INTEGRITY_CHECK_FULL
+import com.par9uet.jm.data.models.CACHE_INTEGRITY_CHECK_OFF
+import com.par9uet.jm.data.models.CACHE_INTEGRITY_CHECK_PARTIAL
 import com.par9uet.jm.store.LocalSettingManager
 import com.par9uet.jm.store.UserManager
+import com.par9uet.jm.network.DohManager
+import com.par9uet.jm.network.DohServer
+import com.par9uet.jm.network.builtinDohServers
 import com.par9uet.jm.ui.viewModel.UserViewModel
+import com.par9uet.jm.utils.biometricCapabilities
+import kotlinx.coroutines.launch
 import org.koin.compose.getKoin
 import org.koin.compose.viewmodel.koinActivityViewModel
 
@@ -79,8 +103,11 @@ import org.koin.compose.viewmodel.koinActivityViewModel
  * 4. 应用锁设置（可跳过）
  * 5. AI 开关（声明 unlimitedai，无道德审查）
  * 6. 提取编码 + 剪切板自动检测
- * 7. 登录账号（可跳过）
- * 8. 若已登录：偏好推荐开关（声明请求网络 API，可能不稳定）
+ * 7. 缓存完整性检查
+ * 8. DoH 网络解析（可选）
+ * 9. 登录账号（可跳过）
+ * 10. 自动签到（可选）
+ * 11. 若已登录：偏好推荐开关（声明请求网络 API，可能不稳定）
  *
  * 右上角随时可跳过整个引导。
  */
@@ -90,11 +117,17 @@ fun WelcomeScreen(
     onComplete: () -> Unit,
     localSettingManager: LocalSettingManager = getKoin().get(),
     userManager: UserManager = getKoin().get(),
+    dohManager: DohManager = getKoin().get(),
     userViewModel: UserViewModel = koinActivityViewModel(),
 ) {
     val localSetting by localSettingManager.localSettingState.collectAsState()
     val isLogin by userManager.isLoginState.collectAsState(false)
     val loginState by userViewModel.loginState.collectAsState()
+    val context = LocalContext.current
+    val biometricCaps = remember(context) { biometricCapabilities(context) }
+    val totalSteps = 12
+    val dohLatency by dohManager.latencyState.collectAsState()
+    val scope = rememberCoroutineScope()
 
     var step by remember { mutableStateOf(0) }
     var preferenceStepHandled by remember { mutableStateOf(false) }
@@ -104,6 +137,10 @@ fun WelcomeScreen(
     var appLockPasswordSet by remember { mutableStateOf(localSetting.appLockPassword.isNotEmpty()) }
     var appLockPatternSet by remember { mutableStateOf(localSetting.appLockPattern.isNotEmpty()) }
     var appLockUnlockMode by remember { mutableStateOf(localSetting.appLockUnlockMode) }
+    var appLockFingerprintEnabled by remember { mutableStateOf(localSetting.appLockFingerprintEnabled) }
+    var appLockFaceEnabled by remember { mutableStateOf(localSetting.appLockFaceEnabled) }
+    var appLockUnlockRule by remember { mutableStateOf(localSetting.appLockUnlockRule) }
+    var appLockRequiredMethods by remember { mutableStateOf(localSetting.appLockRequiredMethods) }
     var showPasswordDialog by remember { mutableStateOf(false) }
     var showPatternDialog by remember { mutableStateOf(false) }
     var loginUsername by remember { mutableStateOf("") }
@@ -114,6 +151,12 @@ fun WelcomeScreen(
     ) { isGranted -> permissionGranted = isGranted }
 
     fun skipOnboarding() {
+        if (appLockEnabled && !appLockPasswordSet && !appLockPatternSet &&
+            !appLockFingerprintEnabled && !appLockFaceEnabled
+        ) {
+            appLockEnabled = false
+            localSettingManager.updateAppLockEnabled(false)
+        }
         localSettingManager.updateOnboardingCompleted(true)
         onComplete()
     }
@@ -124,12 +167,29 @@ fun WelcomeScreen(
         topBar = {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = androidx.compose.ui.graphics.Color.Transparent,
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                 ),
-                title = {},
+                title = {
+                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text(
+                            text = "快速设置",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        LinearProgressIndicator(
+                            progress = { ((step + 1).toFloat() / totalSteps).coerceIn(0f, 1f) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(5.dp),
+                        )
+                    }
+                },
                 actions = {
-                    TextButton(onClick = { skipOnboarding() }) {
-                        Text("跳过", fontWeight = FontWeight.Medium)
+                    TextButton(
+                        onClick = { skipOnboarding() },
+                        shape = MaterialTheme.shapes.large,
+                    ) {
+                        Text("跳过", fontWeight = FontWeight.SemiBold)
                     }
                 }
             )
@@ -138,15 +198,16 @@ fun WelcomeScreen(
             // 当前步骤的按钮，固定在底部
             Surface(
                 tonalElevation = 3.dp,
-                color = MaterialTheme.colorScheme.surface,
-                shadowElevation = 8.dp
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                shadowElevation = 8.dp,
+                shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .navigationBarsPadding()
-                        .padding(horizontal = 24.dp)
-                        .padding(top = 12.dp, bottom = 16.dp),
+                        .padding(horizontal = 20.dp)
+                        .padding(top = 14.dp, bottom = 16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
@@ -171,6 +232,8 @@ fun WelcomeScreen(
                         4 -> StepButtons(
                             primaryText = "下一步",
                             onPrimary = { step = 5 },
+                            primaryEnabled = !appLockEnabled || appLockPasswordSet || appLockPatternSet ||
+                                appLockFingerprintEnabled || appLockFaceEnabled,
                             secondaryText = "跳过",
                             onSecondary = { step = 5 }
                         )
@@ -186,13 +249,15 @@ fun WelcomeScreen(
                             secondaryText = "跳过",
                             onSecondary = { step = 7 }
                         )
-                        7 -> {
+                        7 -> StepButtons(primaryText = "下一步", onPrimary = { step = 8 })
+                        8 -> StepButtons(primaryText = "下一步", onPrimary = { step = 9 })
+                        9 -> {
                             if (isLogin) {
                                 StepButtons(
                                     primaryText = "下一步",
                                     onPrimary = {
                                         if (!preferenceStepHandled) {
-                                            step = 8
+                                            step = 10
                                         } else {
                                             skipOnboarding()
                                         }
@@ -213,11 +278,11 @@ fun WelcomeScreen(
                                 )
                             }
                         }
-                        8 -> StepButtons(
+                        10 -> StepButtons(
                             primaryText = "下一步",
-                            onPrimary = { step = 9 }
+                            onPrimary = { step = 11 }
                         )
-                        9 -> StepButtons(
+                        11 -> StepButtons(
                             primaryText = "完成",
                             onPrimary = {
                                 preferenceStepHandled = true
@@ -242,88 +307,105 @@ fun WelcomeScreen(
                     .widthIn(max = maxContentWidth)
                     .verticalScroll(rememberScrollState())
                     .imePadding()
-                    .padding(horizontal = 24.dp)
-                    .padding(top = 16.dp, bottom = 24.dp),
+                    .padding(horizontal = 20.dp)
+                    .padding(top = 24.dp, bottom = 28.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                when (step) {
-                    0 -> WelcomeStepContent()
-                    1 -> NsfwWarningStepContent()
-                    2 -> DataSourceStepContent()
-                    3 -> PermissionStepContent(
-                        granted = permissionGranted,
-                        onRequestPermission = {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                            } else {
-                                permissionGranted = true
-                            }
+                AnimatedContent(targetState = step, label = "welcomeStep") { currentStep ->
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        when (currentStep) {
+                            0 -> WelcomeStepContent()
+                            1 -> NsfwWarningStepContent()
+                            2 -> DataSourceStepContent()
+                            3 -> PermissionStepContent(
+                                granted = permissionGranted,
+                                onRequestPermission = {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                        permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                    } else {
+                                        permissionGranted = true
+                                    }
+                                }
+                            )
+                            4 -> AppLockStepContent(
+                                enabled = appLockEnabled,
+                                passwordSet = appLockPasswordSet,
+                                patternSet = appLockPatternSet,
+                                fingerprintEnabled = appLockFingerprintEnabled,
+                                faceEnabled = appLockFaceEnabled,
+                                fingerprintAvailable = biometricCaps.canAuthenticate && biometricCaps.hasFingerprintHardware,
+                                faceAvailable = biometricCaps.canAuthenticate && biometricCaps.hasFaceHardware,
+                                unlockRule = appLockUnlockRule,
+                                requiredMethods = appLockRequiredMethods,
+                                onToggle = { enabled ->
+                                    appLockEnabled = enabled
+                                    localSettingManager.updateAppLockEnabled(enabled)
+                                },
+                                onFingerprintToggle = { enabled ->
+                                    appLockFingerprintEnabled = enabled
+                                    localSettingManager.updateAppLockFingerprintEnabled(enabled)
+                                },
+                                onFaceToggle = { enabled ->
+                                    appLockFaceEnabled = enabled
+                                    localSettingManager.updateAppLockFaceEnabled(enabled)
+                                },
+                                onUnlockRuleSet = { rule ->
+                                    appLockUnlockRule = rule
+                                    localSettingManager.updateAppLockUnlockRule(rule)
+                                },
+                                onRequiredMethodsSet = { methods ->
+                                    appLockRequiredMethods = methods
+                                    localSettingManager.updateAppLockRequiredMethods(methods)
+                                },
+                                onShowPasswordDialog = { showPasswordDialog = true },
+                                onShowPatternDialog = { showPatternDialog = true }
+                            )
+                            5 -> AiStepContent(
+                                enabled = localSetting.showAiEntry,
+                                onToggle = { localSettingManager.updateShowAiEntry(it) }
+                            )
+                            6 -> ExtractCodeStepContent(
+                                clipboardAutoDetectEnabled = localSetting.clipboardAutoDetectEnabled,
+                                onToggleClipboard = { localSettingManager.updateClipboardAutoDetectEnabled(it) }
+                            )
+                            7 -> CacheIntegrityCheckStepContent(
+                                mode = localSetting.cacheIntegrityCheckMode,
+                                onModeChange = localSettingManager::updateCacheIntegrityCheckMode,
+                            )
+                            8 -> DohGuideStepContent(
+                                enabled = localSetting.dohEnabled,
+                                autoStart = localSetting.dohAutoStart,
+                                selectedServerId = localSetting.dohServerId,
+                                latency = dohLatency,
+                                servers = builtinDohServers,
+                                onToggle = dohManager::setEnabled,
+                                onAutoStartToggle = dohManager::setAutoStart,
+                                onServerSelect = dohManager::selectServer,
+                                onTest = { server -> scope.launch { dohManager.testServer(server) } },
+                            )
+                            9 -> LoginStepContent(
+                                isLogin = isLogin,
+                                loginState = loginState,
+                                username = loginUsername,
+                                password = loginPassword,
+                                onUsernameChange = { loginUsername = it.filter { ch -> ch.code in 0..127 } },
+                                onPasswordChange = { loginPassword = it.filter { ch -> ch.code in 0..127 } }
+                            )
+                            10 -> AutoSignInStepContent(
+                                enabled = localSetting.autoSignInEnabled,
+                                onToggle = { localSettingManager.updateAutoSignInEnabled(it) }
+                            )
+                            11 -> PreferenceRecommendStepContent(
+                                enabled = localSetting.preferenceRecommendEnabled,
+                                recommendSource = localSetting.recommendSource,
+                                onToggle = { localSettingManager.updatePreferenceRecommendEnabled(it) },
+                                onRecommendSourceChange = { localSettingManager.updateRecommendSource(it) }
+                            )
                         }
-                    )
-                    4 -> AppLockStepContent(
-                        enabled = appLockEnabled,
-                        passwordSet = appLockPasswordSet,
-                        patternSet = appLockPatternSet,
-                        unlockMode = appLockUnlockMode,
-                        onToggle = { enabled ->
-                            appLockEnabled = enabled
-                            localSettingManager.updateAppLockEnabled(enabled)
-                            if (!enabled) {
-                                localSettingManager.updateAppLockPassword("")
-                                localSettingManager.updateAppLockPattern("")
-                                appLockPasswordSet = false
-                                appLockPatternSet = false
-                            }
-                        },
-                        onPasswordSet = { pwd ->
-                            localSettingManager.updateAppLockPassword(pwd)
-                            appLockPasswordSet = true
-                            if (!appLockPatternSet && appLockUnlockMode != APP_LOCK_TYPE_PASSWORD) {
-                                appLockUnlockMode = APP_LOCK_TYPE_PASSWORD
-                                localSettingManager.updateAppLockUnlockMode(APP_LOCK_TYPE_PASSWORD)
-                            }
-                        },
-                        onPatternSet = { pattern ->
-                            localSettingManager.updateAppLockPattern(pattern)
-                            appLockPatternSet = true
-                            if (!appLockPasswordSet && appLockUnlockMode != APP_LOCK_TYPE_PATTERN) {
-                                appLockUnlockMode = APP_LOCK_TYPE_PATTERN
-                                localSettingManager.updateAppLockUnlockMode(APP_LOCK_TYPE_PATTERN)
-                            }
-                        },
-                        onUnlockModeSet = { mode ->
-                            appLockUnlockMode = mode
-                            localSettingManager.updateAppLockUnlockMode(mode)
-                        },
-                        onShowPasswordDialog = { showPasswordDialog = true },
-                        onShowPatternDialog = { showPatternDialog = true }
-                    )
-                    5 -> AiStepContent(
-                        enabled = localSetting.showAiEntry,
-                        onToggle = { localSettingManager.updateShowAiEntry(it) }
-                    )
-                    6 -> ExtractCodeStepContent(
-                        clipboardAutoDetectEnabled = localSetting.clipboardAutoDetectEnabled,
-                        onToggleClipboard = { localSettingManager.updateClipboardAutoDetectEnabled(it) }
-                    )
-                    7 -> LoginStepContent(
-                        isLogin = isLogin,
-                        loginState = loginState,
-                        username = loginUsername,
-                        password = loginPassword,
-                        onUsernameChange = { loginUsername = it.filter { ch -> ch.code in 0..127 } },
-                        onPasswordChange = { loginPassword = it.filter { ch -> ch.code in 0..127 } }
-                    )
-                    8 -> AutoSignInStepContent(
-                        enabled = localSetting.autoSignInEnabled,
-                        onToggle = { localSettingManager.updateAutoSignInEnabled(it) }
-                    )
-                    9 -> PreferenceRecommendStepContent(
-                        enabled = localSetting.preferenceRecommendEnabled,
-                        recommendSource = localSetting.recommendSource,
-                        onToggle = { localSettingManager.updatePreferenceRecommendEnabled(it) },
-                        onRecommendSourceChange = { localSettingManager.updateRecommendSource(it) }
-                    )
+                    }
                 }
             }
         }
@@ -370,27 +452,37 @@ private fun StepHeader(
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            modifier = Modifier.size(64.dp),
-            tint = MaterialTheme.colorScheme.primary
-        )
+        Surface(
+            modifier = Modifier.size(88.dp),
+            shape = MaterialTheme.shapes.extraLarge,
+            color = MaterialTheme.colorScheme.primaryContainer,
+        ) {
+            androidx.compose.foundation.layout.Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(42.dp),
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+            }
+        }
         Text(
             text = title,
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold,
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.SemiBold,
             textAlign = TextAlign.Center
         )
         Text(
             text = description,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp),
         )
     }
 }
@@ -408,8 +500,22 @@ private fun StepWithControlLayout(
     controls: @Composable () -> Unit,
 ) {
     StepHeader(icon = icon, title = title, description = description)
-    Spacer(modifier = Modifier.height(16.dp))
-    controls()
+    Spacer(modifier = Modifier.height(22.dp))
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.extraLarge,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            controls()
+        }
+    }
 }
 
 @Composable
@@ -424,7 +530,10 @@ private fun StepButtons(
     Button(
         onClick = onPrimary,
         enabled = primaryEnabled && !primaryLoading,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 52.dp),
+        shape = MaterialTheme.shapes.extraLarge,
     ) {
         if (primaryLoading) {
             Row(
@@ -445,7 +554,10 @@ private fun StepButtons(
     if (secondaryText != null && onSecondary != null) {
         OutlinedButton(
             onClick = onSecondary,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp),
+            shape = MaterialTheme.shapes.extraLarge,
             colors = ButtonDefaults.outlinedButtonColors(
                 contentColor = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -504,18 +616,24 @@ private fun AppLockStepContent(
     enabled: Boolean,
     passwordSet: Boolean,
     patternSet: Boolean,
-    unlockMode: String,
+    fingerprintEnabled: Boolean,
+    faceEnabled: Boolean,
+    fingerprintAvailable: Boolean,
+    faceAvailable: Boolean,
+    unlockRule: String,
+    requiredMethods: List<String>,
     onToggle: (Boolean) -> Unit,
-    onPasswordSet: (String) -> Unit,
-    onPatternSet: (String) -> Unit,
-    onUnlockModeSet: (String) -> Unit,
+    onFingerprintToggle: (Boolean) -> Unit,
+    onFaceToggle: (Boolean) -> Unit,
+    onUnlockRuleSet: (String) -> Unit,
+    onRequiredMethodsSet: (List<String>) -> Unit,
     onShowPasswordDialog: () -> Unit,
     onShowPatternDialog: () -> Unit,
 ) {
     StepWithControlLayout(
         icon = Icons.Rounded.Lock,
         title = "应用锁（可选）",
-        description = "为应用增加一层保护，从后台返回时需要解锁。可设置数字密码和/或图案锁，并选择解锁方式。"
+        description = "密码、图形、指纹和面容均可独立启用。可选择任一方式通过，或要求指定方式全部通过。系统生物识别面板最终使用哪种模态由 Android 决定。"
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -575,49 +693,88 @@ private fun AppLockStepContent(
                         }
                     }
                 }
-                if (passwordSet || patternSet) {
+                BiometricGuideRow(
+                    title = "指纹",
+                    icon = Icons.Rounded.Fingerprint,
+                    checked = fingerprintEnabled,
+                    available = fingerprintAvailable,
+                    onCheckedChange = onFingerprintToggle,
+                )
+                BiometricGuideRow(
+                    title = "面容",
+                    icon = Icons.Rounded.Face,
+                    checked = faceEnabled,
+                    available = faceAvailable,
+                    onCheckedChange = onFaceToggle,
+                )
+                if (passwordSet || patternSet || fingerprintEnabled || faceEnabled) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         "解锁方式",
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        FilterChip(
-                            selected = unlockMode == APP_LOCK_TYPE_PASSWORD,
-                            onClick = { onUnlockModeSet(APP_LOCK_TYPE_PASSWORD) },
-                            enabled = passwordSet,
-                            label = { Text("仅密码") }
-                        )
-                        FilterChip(
-                            selected = unlockMode == APP_LOCK_TYPE_PATTERN,
-                            onClick = { onUnlockModeSet(APP_LOCK_TYPE_PATTERN) },
-                            enabled = patternSet,
-                            label = { Text("仅图案") }
-                        )
-                        FilterChip(
-                            selected = unlockMode == APP_LOCK_UNLOCK_MODE_BOTH,
-                            onClick = { onUnlockModeSet(APP_LOCK_UNLOCK_MODE_BOTH) },
-                            enabled = passwordSet && patternSet,
-                            label = { Text("图案+密码") }
-                        )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = unlockRule == APP_LOCK_RULE_ANY, onClick = { onUnlockRuleSet(APP_LOCK_RULE_ANY) }, label = { Text("任一通过") })
+                        FilterChip(selected = unlockRule == APP_LOCK_RULE_REQUIRED, onClick = {
+                            onUnlockRuleSet(APP_LOCK_RULE_REQUIRED)
+                            if (requiredMethods.isEmpty()) {
+                                onRequiredMethodsSet(buildList {
+                                    if (passwordSet) add(APP_LOCK_TYPE_PASSWORD)
+                                    if (patternSet) add(APP_LOCK_TYPE_PATTERN)
+                                    if (fingerprintEnabled || faceEnabled) add(APP_LOCK_METHOD_BIOMETRIC)
+                                })
+                            }
+                        }, label = { Text("指定项全部通过") })
+                    }
+                    if (unlockRule == APP_LOCK_RULE_REQUIRED) {
+                        val choices = buildList {
+                            if (passwordSet) add(APP_LOCK_TYPE_PASSWORD to "密码")
+                            if (patternSet) add(APP_LOCK_TYPE_PATTERN to "图形")
+                            if (fingerprintEnabled || faceEnabled) add(APP_LOCK_METHOD_BIOMETRIC to "系统生物识别")
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            choices.forEach { (method, label) ->
+                                FilterChip(
+                                    selected = method in requiredMethods,
+                                    onClick = {
+                                        val next = if (method in requiredMethods) requiredMethods - method else requiredMethods + method
+                                        if (next.isNotEmpty()) onRequiredMethodsSet(next)
+                                    },
+                                    label = { Text("必须：$label") },
+                                )
+                            }
+                        }
                     }
                     Text(
-                        text = when (unlockMode) {
-                            APP_LOCK_TYPE_PASSWORD -> "从后台返回时需输入数字密码解锁"
-                            APP_LOCK_TYPE_PATTERN -> "从后台返回时需绘制图案解锁"
-                            APP_LOCK_UNLOCK_MODE_BOTH -> "从后台返回时需先输入密码再绘制图案解锁"
-                            else -> ""
-                        },
+                        text = if (unlockRule == APP_LOCK_RULE_ANY) "任一已启用方式验证成功即可进入" else "必须完成上方所有选中的必需验证",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun BiometricGuideRow(
+    title: String,
+    icon: ImageVector,
+    checked: Boolean,
+    available: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp))
+            Text(if (available) title else "$title（不可用或未录入）")
+        }
+        Switch(checked = checked, enabled = available, onCheckedChange = onCheckedChange)
     }
 }
 
@@ -664,6 +821,107 @@ private fun ExtractCodeStepContent(
 }
 
 @Composable
+private fun CacheIntegrityCheckStepContent(
+    mode: String,
+    onModeChange: (String) -> Unit,
+) {
+    StepWithControlLayout(
+        icon = Icons.Rounded.Storage,
+        title = "缓存完整性检查",
+        description = "打开已缓存漫画时可检查文件是否被删除或损坏。完全检查会逐章核对图片页数，缓存较多时会花费更多时间；发现问题后可直接重新下载。默认关闭。",
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(
+                "关闭（默认）" to CACHE_INTEGRITY_CHECK_OFF,
+                "部分检查：配置、封面" to CACHE_INTEGRITY_CHECK_PARTIAL,
+                "完全检查：配置、封面、全部图片" to CACHE_INTEGRITY_CHECK_FULL,
+            ).forEach { (label, value) ->
+                FilterChip(
+                    selected = mode == value,
+                    onClick = { onModeChange(value) },
+                    label = { Text(label) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DohGuideStepContent(
+    enabled: Boolean,
+    autoStart: Boolean,
+    selectedServerId: String,
+    latency: Map<String, com.par9uet.jm.network.DohLatencyResult>,
+    servers: List<DohServer>,
+    onToggle: (Boolean) -> Unit,
+    onAutoStartToggle: (Boolean) -> Unit,
+    onServerSelect: (String) -> Unit,
+    onTest: (DohServer) -> Unit,
+) {
+    StepWithControlLayout(
+        icon = Icons.Rounded.Dns,
+        title = "DoH 网络解析（可选）",
+        description = "DoH 可减少运营商 DNS 污染，改善首页、搜索和封面请求。默认关闭；你可以先测速并选择线路，也可以稍后在设置 → 连接 → DoH 中配置自定义地址。"
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("启用 DoH", style = MaterialTheme.typography.bodyLarge)
+            Switch(checked = enabled, onCheckedChange = onToggle)
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("启动时自动启用", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    "打开应用后自动恢复 DoH",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(checked = autoStart, onCheckedChange = onAutoStartToggle)
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("选择线路并测速", style = MaterialTheme.typography.titleSmall)
+            servers.forEach { server ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(
+                        selected = selectedServerId == server.id,
+                        onClick = { onServerSelect(server.id) },
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(server.name)
+                        Text(
+                            server.displayUrl,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    latency[server.id]?.let { result ->
+                        Text(
+                            result.elapsedMs?.let { "$it ms" } ?: "失败",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (result.elapsedMs != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    androidx.compose.material3.IconButton(onClick = { onTest(server) }) {
+                        Icon(Icons.Rounded.Refresh, contentDescription = "测试线路")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun LoginStepContent(
     isLogin: Boolean,
     loginState: com.par9uet.jm.ui.models.CommonUIState<*>,
@@ -682,32 +940,44 @@ private fun LoginStepContent(
         }
     )
     if (!isLogin) {
-        Spacer(modifier = Modifier.height(16.dp))
-        OutlinedTextField(
-            value = username,
-            onValueChange = onUsernameChange,
-            label = { Text("用户名") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        OutlinedTextField(
-            value = password,
-            onValueChange = onPasswordChange,
-            label = { Text("密码") },
-            singleLine = true,
-            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-            modifier = Modifier.fillMaxWidth()
-        )
-        if (loginState.isError) {
-            Text(
-                text = loginState.errorMsg ?: "登录失败",
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp)
-            )
+        Spacer(modifier = Modifier.height(22.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.extraLarge,
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                OutlinedTextField(
+                    value = username,
+                    onValueChange = onUsernameChange,
+                    label = { Text("用户名") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.large,
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = onPasswordChange,
+                    label = { Text("密码") },
+                    singleLine = true,
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.large,
+                )
+                if (loginState.isError) {
+                    Text(
+                        text = loginState.errorMsg ?: "登录失败",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
         }
     }
 }

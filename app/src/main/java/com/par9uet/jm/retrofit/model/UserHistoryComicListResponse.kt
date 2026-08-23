@@ -41,6 +41,7 @@ data class UserHistoryComicListResponse (
                 isCollect = false,
                 relateComicList = listOf(),
                 comicChapterList = listOf(),
+                coverUrl = it.image,
                 price = 0,
                 isBuy = false,
             )

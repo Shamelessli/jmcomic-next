@@ -3,6 +3,7 @@ package com.par9uet.jm.utils
 import okhttp3.ConnectionSpec
 import okhttp3.OkHttpClient
 import okhttp3.TlsVersion
+import java.security.KeyStore
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
@@ -12,7 +13,9 @@ import javax.net.ssl.X509TrustManager
  * 1. 启用 TLS 1.2（Android 6 默认不启用）
  * 2. 信任系统证书（配合 network_security_config.xml 信任用户证书）
  */
-fun OkHttpClient.Builder.applyTlsCompat(): OkHttpClient.Builder {
+fun OkHttpClient.Builder.applyTlsCompat(
+    includeDeviceCertificates: Boolean = true,
+): OkHttpClient.Builder {
     try {
         // 配置兼容的 TLS 版本（Android 6 需要 TLS 1.2）
         val compatSpec = ConnectionSpec.Builder(ConnectionSpec.COMPATIBLE_TLS)
@@ -20,9 +23,11 @@ fun OkHttpClient.Builder.applyTlsCompat(): OkHttpClient.Builder {
             .build()
         connectionSpecs(listOf(compatSpec, ConnectionSpec.CLEARTEXT))
 
-        // 使用系统默认的 TrustManager，确保兼容 Android 6 的信任库
+        // Use platform CAs by default. The optional system-only mode is used by
+        // DoH when a user explicitly decides not to trust user-installed CAs.
         val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
-        tmf.init(null as java.security.KeyStore?)
+        val trustStore: KeyStore? = if (includeDeviceCertificates) null else systemOnlyKeyStore()
+        tmf.init(trustStore)
         val trustManagers = tmf.trustManagers
         val x509TrustManager = trustManagers.first { it is X509TrustManager } as X509TrustManager
 
@@ -37,3 +42,18 @@ fun OkHttpClient.Builder.applyTlsCompat(): OkHttpClient.Builder {
     }
     return this
 }
+
+private fun systemOnlyKeyStore(): KeyStore? = runCatching {
+    val androidCaStore = KeyStore.getInstance("AndroidCAStore").apply { load(null, null) }
+    val systemOnly = KeyStore.getInstance(KeyStore.getDefaultType()).apply { load(null, null) }
+    val aliases = androidCaStore.aliases()
+    while (aliases.hasMoreElements()) {
+        val alias = aliases.nextElement()
+        if (alias.startsWith("system:")) {
+            androidCaStore.getCertificate(alias)?.let { certificate ->
+                systemOnly.setCertificateEntry(alias, certificate)
+            }
+        }
+    }
+    systemOnly
+}.getOrNull()

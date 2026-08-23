@@ -7,8 +7,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import coil.ImageLoader
 import com.par9uet.jm.cache.getComicChapterDownloadDir
+import com.par9uet.jm.cache.getComicChapterDownloadPath
 import com.par9uet.jm.cache.getDownloadDir
+import com.par9uet.jm.cache.getDownloadTreeUri
+import com.par9uet.jm.cache.findExistingComicChapterDownloadPath
+import com.par9uet.jm.cache.getTreeUriForCachePath
+import com.par9uet.jm.cache.setDownloadTreeUri
 import com.par9uet.jm.cache.listComicImageFiles
+import com.par9uet.jm.cache.isDocumentCachePath
+import com.par9uet.jm.cache.listComicImagePaths
 import com.par9uet.jm.data.models.Comic
 import com.par9uet.jm.data.models.ComicChapter
 import com.par9uet.jm.data.models.ComicPicImageState
@@ -210,10 +217,40 @@ class ComicReadViewModel(
             val groupId = downloadComic?.groupId?.takeIf { it != 0 } ?: comicId
             readHistoryComicId.intValue = readHistoryManager.markRead(groupId, comicId)
             loadLocalChapterList(comicId, downloadComic)
-            val imageDir = ensureLocalImageDir(context, comicId, downloadComic)
-            val files = imageDir
-                ?.let(::listComicImageFiles)
-                .orEmpty()
+            val storedPath = downloadComic?.zipPath.orEmpty()
+            if (getDownloadTreeUri(context) == null && downloadComic != null) {
+                val inferredTree = downloadComicDao.getByGroupId(groupId)
+                    .asSequence()
+                    .flatMap { sequenceOf(it.zipPath, it.coverPath) }
+                    .mapNotNull(::getTreeUriForCachePath)
+                    .firstOrNull()
+                if (inferredTree != null) {
+                    setDownloadTreeUri(context, inferredTree.toString())
+                    localSettingManager.updateDownloadTreeUri(inferredTree.toString())
+                }
+            }
+            val customStorageEnabled = getDownloadTreeUri(context) != null
+            // Once a custom tree is selected it is the source of truth. Reading
+            // the old default path here made multi-page chapters appear to work
+            // while still pointing at files that had already been migrated.
+            var files = if (customStorageEnabled && downloadComic != null) {
+                runCatching {
+                    val currentPath = findExistingComicChapterDownloadPath(context, downloadComic)
+                        ?: getComicChapterDownloadPath(context, downloadComic)
+                    listLocalImages(context, currentPath)
+                }.getOrDefault(emptyList())
+                    .ifEmpty {
+                        // Do not use a stale default-path URI once a custom tree
+                        // is active. The migrated tree is the only source here.
+                        emptyList()
+                    }
+            } else {
+                storedPath.takeIf(::isDocumentCachePath)?.let { listLocalImages(context, it) }
+                    ?: ensureLocalImageDir(context, comicId, downloadComic)
+                        ?.let(::listComicImageFiles)
+                        .orEmpty()
+                        .map(File::getAbsolutePath)
+            }
 
             if (files.isEmpty()) {
                 _comicPicState.update {
@@ -228,11 +265,11 @@ class ComicReadViewModel(
 
             _comicPicState.update {
                 it.copy(
-                    data = files.mapIndexed { index, file ->
+                    data = files.mapIndexed { index, path ->
                         ComicPicImageState(
                             index = index,
                             comicId = comicId,
-                            originSrc = file.absolutePath,
+                            originSrc = path,
                             __scrambleId = Int.MAX_VALUE,
                             __speed = "1",
                             picImageLoader = picImageLoader
@@ -242,6 +279,15 @@ class ComicReadViewModel(
                 )
             }
             onSuccess?.invoke()
+        }
+    }
+
+    private fun listLocalImages(context: Context, path: String): List<String> {
+        if (path.isBlank()) return emptyList()
+        return if (isDocumentCachePath(path)) {
+            listComicImagePaths(context, path)
+        } else {
+            listComicImageFiles(File(path)).map(File::getAbsolutePath)
         }
     }
 

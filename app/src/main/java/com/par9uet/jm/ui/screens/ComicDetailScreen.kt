@@ -34,6 +34,9 @@ import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.RemoveRedEye
+import androidx.compose.material.icons.rounded.Bookmarks
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
@@ -523,16 +526,39 @@ private fun FolderPickerSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        dragHandle = {
+            Surface(
+                modifier = Modifier.padding(vertical = 10.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+                shape = MaterialTheme.shapes.extraLarge,
+            ) { Box(Modifier.width(32.dp).height(4.dp)) }
+        },
     ) {
-        Text(
-            text = "\u9009\u62e9\u6536\u85cf\u5939",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
-        )
-        HorizontalDivider()
+        Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Surface(
+                    modifier = Modifier.size(44.dp),
+                    shape = MaterialTheme.shapes.large,
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                ) {
+                    Icon(Icons.Rounded.Bookmarks, contentDescription = null, modifier = Modifier.padding(10.dp))
+                }
+                Column {
+                    Text("选择收藏夹", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                    Text("收藏后仍可在收藏页移动位置", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
         LazyColumn(
-            modifier = Modifier.fillMaxWidth().fillMaxHeight(0.6f)
+            modifier = Modifier.fillMaxWidth().fillMaxHeight(0.6f),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             // "0"（全部）排第一，其余按原序
             val sortedFolders = linkedMapOf<String, String>().apply {
@@ -544,12 +570,33 @@ private fun FolderPickerSheet(
             }
             items(sortedFolders.size) { index ->
                 val entry = sortedFolders.entries.elementAt(index)
-                ListItem(
-                    headlineContent = { Text(entry.value) },
-                    modifier = Modifier.clickable { onSelect(entry.key) }
-                )
-                if (index < sortedFolders.size - 1) {
-                    HorizontalDivider()
+                val selected = entry.key == "0"
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelect(entry.key) },
+                    shape = MaterialTheme.shapes.large,
+                    color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainer,
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Surface(
+                            modifier = Modifier.size(38.dp),
+                            shape = MaterialTheme.shapes.medium,
+                            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,
+                            contentColor = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        ) {
+                            Icon(
+                                if (entry.key == "0") Icons.Rounded.Bookmarks else Icons.Rounded.Folder,
+                                contentDescription = null,
+                                modifier = Modifier.padding(9.dp),
+                            )
+                        }
+                        Text(entry.value, modifier = Modifier.weight(1f).padding(horizontal = 12.dp), style = MaterialTheme.typography.bodyLarge)
+                        if (selected) Icon(Icons.Rounded.Check, contentDescription = "默认收藏夹", tint = MaterialTheme.colorScheme.primary)
+                    }
                 }
             }
         }

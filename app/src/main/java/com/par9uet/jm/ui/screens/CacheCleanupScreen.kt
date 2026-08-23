@@ -41,14 +41,20 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.par9uet.jm.cache.getCommonCacheDir
-import com.par9uet.jm.cache.getCommonPicDecodeCacheDir
 import com.par9uet.jm.cache.getDownloadDir
+import com.par9uet.jm.cache.cachePathSize
+import com.par9uet.jm.cache.deleteCachePath
+import com.par9uet.jm.cache.isDocumentCachePath
+import com.par9uet.jm.database.dao.DownloadComicDao
 import com.par9uet.jm.ui.components.CommonScaffold
 import com.par9uet.jm.utils.formatBytes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import coil.ImageLoader
+import coil.annotation.ExperimentalCoilApi
+import org.koin.compose.getKoin
 
 private data class CacheItem(
     val id: String,
@@ -57,10 +63,15 @@ private data class CacheItem(
     val description: String,
     val sizeBytes: Long,
     val dir: File?,
+    val documentPaths: List<String> = emptyList(),
 )
 
 @Composable
-fun CacheCleanupScreen() {
+@OptIn(ExperimentalCoilApi::class)
+fun CacheCleanupScreen(
+    downloadComicDao: DownloadComicDao = getKoin().get(),
+    imageLoader: ImageLoader = getKoin().get(),
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
@@ -71,8 +82,10 @@ fun CacheCleanupScreen() {
     val checkedMap = remember { mutableStateMapOf<String, Boolean>() }
 
     var cacheItems by remember { mutableStateOf<List<CacheItem>>(emptyList()) }
+    var downloadRecordIds by remember { mutableStateOf<List<Int>>(emptyList()) }
+    var reloadKey by remember { mutableStateOf(0) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(reloadKey) {
         withContext(Dispatchers.IO) {
             val items = mutableListOf<CacheItem>()
 
@@ -90,7 +103,13 @@ fun CacheCleanupScreen() {
             )
 
             val downloadDir = getDownloadDir(context)
-            val downloadSize = dirSize(downloadDir)
+            val downloadRecords = downloadComicDao.getAll()
+            downloadRecordIds = downloadRecords.map { it.id }
+            val documentPaths = downloadRecords
+                .flatMap { listOf(it.zipPath, it.coverPath) }
+                .filter(::isDocumentCachePath)
+                .distinct()
+            val downloadSize = dirSize(downloadDir) + documentPaths.sumOf { cachePathSize(context, it) }
             items.add(
                 CacheItem(
                     id = "download",
@@ -98,7 +117,8 @@ fun CacheCleanupScreen() {
                     title = "漫画缓存",
                     description = "已下载的漫画图片，清理后需重新下载",
                     sizeBytes = downloadSize,
-                    dir = downloadDir
+                    dir = downloadDir,
+                    documentPaths = documentPaths,
                 )
             )
 
@@ -129,7 +149,7 @@ fun CacheCleanupScreen() {
             )
 
             val totalAppCache = context.cacheDir
-            val totalSize = dirSize(totalAppCache)
+            val totalSize = dirSize(totalAppCache) + documentPaths.sumOf { cachePathSize(context, it) }
             items.add(
                 CacheItem(
                     id = "total",
@@ -137,7 +157,8 @@ fun CacheCleanupScreen() {
                     title = "全部应用缓存",
                     description = "包含以上所有缓存和其他临时文件",
                     sizeBytes = totalSize,
-                    dir = totalAppCache
+                    dir = totalAppCache,
+                    documentPaths = documentPaths,
                 )
             )
 
@@ -168,17 +189,48 @@ fun CacheCleanupScreen() {
                         scope.launch {
                             var freedBytes = 0L
                             withContext(Dispatchers.IO) {
-                                selectedItems.forEach { item ->
-                                    item.dir?.let { dir ->
-                                        freedBytes += dirSize(dir)
-                                        dir.deleteRecursively()
+                                val selectedIds = selectedItems.mapTo(mutableSetOf()) { it.id }
+                                val clearAll = "total" in selectedIds
+                                val clearImageCache = clearAll || "common" in selectedIds
+                                if (clearImageCache) {
+                                    val imageCacheDir = getCommonCacheDir(context)
+                                    freedBytes += dirSize(imageCacheDir)
+                                    runCatching { imageLoader.diskCache?.clear() }
+                                    // Coil keeps this cache instance alive; never delete its root directory directly.
+                                    getCommonCacheDir(context)
+                                }
+
+                                if (clearAll) {
+                                    context.cacheDir.listFiles().orEmpty()
+                                        .filterNot { it.name == "common" }
+                                        .forEach { child ->
+                                            freedBytes += dirSize(child)
+                                            child.deleteRecursively()
+                                        }
+                                } else {
+                                    selectedItems.filter { it.id !in setOf("common", "total") }.forEach { item ->
+                                        item.dir?.let { dir ->
+                                            freedBytes += dirSize(dir)
+                                            dir.deleteRecursively()
+                                        }
                                     }
-                                    checkedMap[item.id] = false
+                                }
+
+                                if (clearAll || "download" in selectedIds) {
+                                    selectedItems.flatMap { it.documentPaths }.distinct().forEach { path ->
+                                        freedBytes += cachePathSize(context, path)
+                                        deleteCachePath(context, path)
+                                    }
+                                }
+                                selectedIds.forEach { checkedMap[it] = false }
+                                if ((clearAll || "download" in selectedIds) && downloadRecordIds.isNotEmpty()) {
+                                    downloadComicDao.deleteByIds(downloadRecordIds)
                                 }
                             }
                             cleaning = false
                             cleanResult = "已清理 ${formatBytes(freedBytes)}"
                             loading = true
+                            reloadKey++
                         }
                     }
                 ) { Text("清理", color = MaterialTheme.colorScheme.error) }

@@ -25,6 +25,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.DriveFileMove
@@ -38,11 +39,14 @@ import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -75,6 +79,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -86,6 +91,7 @@ import com.par9uet.jm.ui.components.Comic
 import com.par9uet.jm.ui.components.ComicSkeleton
 import com.par9uet.jm.ui.components.PullRefreshAndLoadMoreGrid
 import com.par9uet.jm.ui.components.adaptiveComicGridCells
+import com.par9uet.jm.ui.components.adaptiveDialogMaxHeight
 import com.par9uet.jm.ui.viewModel.UserViewModel
 import com.par9uet.jm.store.LocalSettingManager
 import org.koin.compose.getKoin
@@ -194,53 +200,86 @@ fun UserCollectComicScreen(
         Column(
             modifier = Modifier.fillMaxSize()
         ) {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                tonalElevation = 0.dp,
+            ) {
+                Column(
+                    modifier = Modifier.padding(vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
             // 顶部搜索栏 + 筛选按钮
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                    .padding(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                OutlinedTextField(
-                    modifier = Modifier.weight(1f),
-                    value = collectComicFilter.searchText,
-                    onValueChange = { userViewModel.updateCollectSearchText(it) },
-                    singleLine = true,
-                    placeholder = { Text("搜索漫画名 / 作者 / 标签") },
-                    leadingIcon = {
-                        Icon(Icons.Rounded.Search, contentDescription = null)
-                    },
-                    trailingIcon = {
+                Surface(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(50.dp),
+                    shape = MaterialTheme.shapes.large,
+                    color = MaterialTheme.colorScheme.surface,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Search,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                        BasicTextField(
+                            value = collectComicFilter.searchText,
+                            onValueChange = { userViewModel.updateCollectSearchText(it) },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.bodyLarge.copy(
+                                color = MaterialTheme.colorScheme.onSurface,
+                            ),
+                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                            decorationBox = { innerTextField ->
+                                if (collectComicFilter.searchText.isEmpty()) {
+                                    Text(
+                                        "搜索漫画名 / 作者 / 标签",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                innerTextField()
+                            },
+                        )
                         if (collectComicFilter.searchText.isNotEmpty()) {
                             IconButton(onClick = { userViewModel.updateCollectSearchText("") }) {
                                 Icon(Icons.Rounded.Close, contentDescription = "清除")
                             }
                         }
-                    },
-                    shape = MaterialTheme.shapes.large,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        unfocusedBorderColor = Color.Transparent,
-                        focusedBorderColor = MaterialTheme.colorScheme.primary
-                    )
-                )
-                IconButton(
+                    }
+                }
+                FilledTonalIconButton(
                     onClick = {
                         draftSelectedTags = collectComicFilter.selectedTags
                         draftSelectedAuthors = collectComicFilter.selectedAuthors
                         draftTagLogic = collectComicFilter.tagLogic
                         showFilterDialog = true
                     },
-                    modifier = Modifier.size(44.dp)
+                    modifier = Modifier.size(48.dp)
                 ) {
-                    Icon(
-                        Icons.Rounded.FilterList,
-                        contentDescription = "筛选",
-                        modifier = Modifier.size(22.dp),
-                        tint = if (activeFilterCount > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    BadgedBox(
+                        badge = {
+                            if (activeFilterCount > 0) Badge { Text(activeFilterCount.toString()) }
+                        }
+                    ) {
+                        Icon(
+                            Icons.Rounded.FilterList,
+                            contentDescription = "筛选",
+                            modifier = Modifier.size(22.dp),
+                        )
+                    }
                 }
             }
 
@@ -248,7 +287,7 @@ fun UserCollectComicScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 2.dp)
+                    .padding(horizontal = 16.dp)
                     .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -265,33 +304,47 @@ fun UserCollectComicScreen(
                         )
                     }
                 }
-                IconButton(onClick = {
+                FilledTonalIconButton(onClick = {
                     newFolderName = ""
                     showCreateFolderDialog = true
-                }) {
+                }, modifier = Modifier.size(40.dp)) {
                     Icon(Icons.Rounded.Add, contentDescription = "新建收藏夹", modifier = Modifier.size(20.dp))
                 }
-                IconButton(onClick = { showFolderManageSheet = true }) {
+                FilledTonalIconButton(
+                    onClick = { showFolderManageSheet = true },
+                    modifier = Modifier.size(40.dp),
+                ) {
                     Icon(Icons.Rounded.Folder, contentDescription = "管理收藏夹", modifier = Modifier.size(20.dp))
+                }
+            }
                 }
             }
 
             // 排序：Material 3 单选 SegmentedButton
-            SingleChoiceSegmentedButtonRow(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 2.dp)
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                CollectComicOrderFilter.entries.forEachIndexed { index, item ->
-                    SegmentedButton(
-                        selected = item == order,
-                        onClick = { userViewModel.changeCollectComicOrder(item) },
-                        shape = SegmentedButtonDefaults.itemShape(
-                            index,
-                            CollectComicOrderFilter.entries.size
-                        )
-                    ) {
-                        Text(item.label)
+                Text(
+                    text = "排序",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.weight(1f)) {
+                    CollectComicOrderFilter.entries.forEachIndexed { index, item ->
+                        SegmentedButton(
+                            selected = item == order,
+                            onClick = { userViewModel.changeCollectComicOrder(item) },
+                            shape = SegmentedButtonDefaults.itemShape(
+                                index,
+                                CollectComicOrderFilter.entries.size
+                            )
+                        ) {
+                            Text(item.label)
+                        }
                     }
                 }
             }
@@ -709,34 +762,50 @@ private fun FilterDialog(
             }
             Spacer(modifier = Modifier.height(12.dp))
             // 搜索框：搜索 tag 或作者
-            OutlinedTextField(
-                modifier = Modifier.fillMaxWidth(),
-                value = filterQuery,
-                onValueChange = { filterQuery = it },
-                singleLine = true,
-                placeholder = {
-                    Text(
-                        if (selectedTabIndex == 0) "搜索标签" else "搜索作者"
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp),
+                shape = MaterialTheme.shapes.large,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Search,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
                     )
-                },
-                leadingIcon = {
-                    Icon(Icons.Rounded.Search, contentDescription = null)
-                },
-                trailingIcon = {
+                    BasicTextField(
+                        value = filterQuery,
+                        onValueChange = { filterQuery = it },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(
+                            color = MaterialTheme.colorScheme.onSurface,
+                        ),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        decorationBox = { innerTextField ->
+                            if (filterQuery.isEmpty()) {
+                                Text(
+                                    if (selectedTabIndex == 0) "搜索标签" else "搜索作者",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            innerTextField()
+                        },
+                    )
                     if (filterQuery.isNotEmpty()) {
                         IconButton(onClick = { filterQuery = "" }) {
                             Icon(Icons.Rounded.Close, contentDescription = "清除")
                         }
                     }
-                },
-                shape = MaterialTheme.shapes.large,
-                colors = OutlinedTextFieldDefaults.colors(
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    unfocusedBorderColor = Color.Transparent,
-                    focusedBorderColor = MaterialTheme.colorScheme.primary
-                )
-            )
+                }
+            }
             Spacer(modifier = Modifier.height(12.dp))
             // Tab 行
             PrimaryTabRow(
@@ -887,7 +956,7 @@ private fun MoveFolderSheet(
                 )
             } else {
                 LazyColumn(
-                    modifier = Modifier.heightIn(max = 360.dp)
+                    modifier = Modifier.heightIn(max = adaptiveDialogMaxHeight(360.dp))
                 ) {
                     items(availableFolders.entries.toList(), key = { it.key }) { (folderId, folderName) ->
                         Row(

@@ -30,7 +30,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,18 +37,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import coil.ImageLoader
-import coil.compose.AsyncImage
 import com.par9uet.jm.data.models.Comic
 import com.par9uet.jm.repository.ComicRepository
 import com.par9uet.jm.retrofit.model.NetWorkResult
-import com.par9uet.jm.store.RemoteSettingManager
 import com.par9uet.jm.store.ToastManager
 import com.par9uet.jm.ui.components.CommonScaffold
+import com.par9uet.jm.ui.components.ComicCoverImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.koin.compose.getKoin
@@ -64,14 +60,10 @@ import org.koin.compose.getKoin
 @Composable
 fun ExtractCodeScreen(
     comicRepository: ComicRepository = getKoin().get(),
-    remoteSettingManager: RemoteSettingManager = getKoin().get(),
     toastManager: ToastManager = getKoin().get(),
-    imageLoader: ImageLoader = getKoin().get(),
 ) {
     val mainNavController = LocalMainNavController.current
     val clipboardManager = LocalClipboardManager.current
-    val remoteSetting by remoteSettingManager.remoteSettingState.collectAsState()
-
     var inputText by remember { mutableStateOf("") }
     var extractedCode by remember { mutableStateOf<String?>(null) }
     var previewComic by remember { mutableStateOf<Comic?>(null) }
@@ -208,11 +200,8 @@ fun ExtractCodeScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     // 左侧封面小窗口
-                    AsyncImage(
-                        model = "${remoteSetting.imgHost}/media/albums/${comic.id}_3x4.jpg",
-                        imageLoader = imageLoader,
-                        contentDescription = "${comic.name}的封面",
-                        contentScale = ContentScale.Crop,
+                    ComicCoverImage(
+                        comic = comic,
                         modifier = Modifier
                             .width(96.dp)
                             .height(128.dp)

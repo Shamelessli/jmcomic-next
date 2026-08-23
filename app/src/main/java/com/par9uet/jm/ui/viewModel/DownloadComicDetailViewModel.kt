@@ -113,6 +113,7 @@ class DownloadComicDetailViewModel(
         val zipItem = completeItems.firstOrNull { it.zipPath.isNotBlank() }
             ?: detailItems.firstOrNull { it.zipPath.isNotBlank() }
         val completeSorted = completeItems.sortedBy { it.createTime }
+        val allSorted = allItems.sortedBy { it.createTime }
 
         return DownloadComicDetailState(
             loading = false,
@@ -125,14 +126,15 @@ class DownloadComicDetailViewModel(
             createTime = detailItems.maxOf { it.createTime },
             zipPath = zipItem?.zipPath.orEmpty(),
             cachePath = resolveCachePath(coverItem?.coverPath, zipItem?.zipPath),
-            allItems = allItems.sortedBy { it.createTime },
+            allItems = allSorted,
             completeItems = completeSorted,
-            readableChapters = completeSorted.mapIndexed { index, item ->
+            readableChapters = allSorted.mapIndexed { index, item ->
                 ComicChapter(
                     id = item.id,
                     name = item.chapterName.ifBlank {
-                        if (completeSorted.size > 1) "第 ${index + 1} 章" else item.name
-                    }
+                        if (allSorted.size > 1) "第 ${index + 1} 章" else item.name
+                    },
+                    isAvailable = item.status == "complete",
                 )
             },
             statusSummary = buildStatusSummary(allItems, completeItems),
@@ -144,6 +146,11 @@ class DownloadComicDetailViewModel(
 private fun resolveCachePath(coverPath: String?, zipPath: String?): String {
     val chapterPath = zipPath.orEmpty()
     if (chapterPath.isNotBlank()) {
+        if (chapterPath.startsWith("content://")) {
+            // SAF paths are opaque document URIs; never pass them through File,
+            // which turns them into a bogus path under the default cache root.
+            return chapterPath
+        }
         val file = File(chapterPath)
         if (file.isDirectory) {
             return file.parentFile?.absolutePath ?: file.absolutePath
@@ -152,6 +159,7 @@ private fun resolveCachePath(coverPath: String?, zipPath: String?): String {
     }
     val cover = coverPath.orEmpty()
     if (cover.isNotBlank()) {
+        if (cover.startsWith("content://")) return cover
         return File(cover).parentFile?.absolutePath.orEmpty()
     }
     return ""
@@ -159,7 +167,9 @@ private fun resolveCachePath(coverPath: String?, zipPath: String?): String {
 
 private fun resolveCoverPath(coverPath: String?, zipPath: String?): String {
     val cover = coverPath.orEmpty()
-    if (cover.isNotBlank() && File(cover).exists()) {
+    // Preserve persisted SAF URIs. The local image composable validates the path
+    // without ever falling back to a network request for cached comics.
+    if (cover.isNotBlank()) {
         return cover
     }
     val chapterPath = zipPath.orEmpty()

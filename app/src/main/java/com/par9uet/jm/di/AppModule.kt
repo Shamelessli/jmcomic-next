@@ -23,6 +23,8 @@ import com.par9uet.jm.store.ReadHistoryManager
 import com.par9uet.jm.store.RemoteSettingManager
 import com.par9uet.jm.store.ToastManager
 import com.par9uet.jm.store.UserManager
+import com.par9uet.jm.network.DohManager
+import okhttp3.Dns
 import com.par9uet.jm.task.AppInitTask
 import com.par9uet.jm.ui.viewModel.GlobalViewModel
 import com.par9uet.jm.ui.viewModel.AiChatViewModel
@@ -55,17 +57,19 @@ val appModule = module {
     single { LauncherDisguiseApplier(get()) }
 
     single { RemoteSettingRepositoryImpl(get(), get()) } bind RemoteSettingRepository::class
-    single { AiChatRepository(get()) }
+    single { AiChatRepository(get(), get()) }
 
     single { UserManager(get(), get(), get(), get()) } bind AppInitTask::class
     single { RemoteSettingManager(get()) } bind AppInitTask::class
     single { LocalSettingManager(get(), get()) } bind AppInitTask::class
+    single { DohManager(get()) } bind AppInitTask::class
+    single<Dns> { get<DohManager>() }
     single { HistorySearchManager(get()) } bind AppInitTask::class
     single { ReadHistoryManager(get()) } bind AppInitTask::class
     single { ToastManager() }
     single { DownloadToastAggregator(get()) }
     single { InitManager() }
-    single { AppUpdateDownloadManager(get(), get(), get()) }
+    single { AppUpdateDownloadManager(get(), get(), get(), get()) }
 
     single<Gson> { GsonBuilder().setStrictness(Strictness.LENIENT).serializeNulls().create() }
 

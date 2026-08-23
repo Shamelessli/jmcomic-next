@@ -31,6 +31,8 @@
 # Gson is also used for persisted local data. Keep field names so existing
 # installed data and API JSON remain compatible after R8 obfuscation.
 -keep class com.par9uet.jm.data.models.** { *; }
+-keep class com.par9uet.jm.cache.DownloadComicCacheConfig { *; }
+-keep class com.par9uet.jm.cache.DownloadComicCacheChapter { *; }
 -keep class com.par9uet.jm.database.model.** { *; }
 -keep class com.par9uet.jm.ui.models.** { *; }
 -keep class com.par9uet.jm.task.AppTaskInfo { *; }

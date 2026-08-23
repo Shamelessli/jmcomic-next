@@ -21,6 +21,9 @@ data class ComicDetailResponse(
     val series_id: String,
     val price: String,
     val purchased: Boolean,
+    // Some API responses include the cover directly. Keep it as a fallback when
+    // the configured image host is unavailable (for example during DoH failures).
+    val image: String? = null,
 ) {
     fun toComic(): Comic {
         return Comic(
@@ -40,11 +43,13 @@ data class ComicDetailResponse(
                 Comic.create(
                     it.id.toInt(),
                     it.name,
-                    listOf(it.author)
+                    listOf(it.author),
+                    coverUrl = it.image,
                 )
             },
             comicChapterList = series.map { ComicChapter(it.id.toInt(), it.name) },
             seriesId = series_id,
+            coverUrl = image.orEmpty(),
             price = price.toIntOrNull() ?: 0,
             isBuy = purchased
         )

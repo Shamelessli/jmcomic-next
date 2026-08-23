@@ -113,6 +113,7 @@ import com.par9uet.jm.data.models.AiSearchSettings
 import com.par9uet.jm.repository.WebSearchResult
 import com.par9uet.jm.store.ToastManager
 import com.par9uet.jm.ui.viewModel.AiChatViewModel
+import com.par9uet.jm.ui.components.adaptiveDialogMaxHeight
 import kotlinx.coroutines.launch
 import org.koin.compose.getKoin
 import org.koin.compose.viewmodel.koinActivityViewModel
@@ -1039,7 +1040,7 @@ private fun SelectCopyDialog(
                 Text(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 420.dp)
+                        .heightIn(max = adaptiveDialogMaxHeight(420.dp))
                         .verticalScroll(rememberScrollState()),
                     text = text.ifBlank { "暂无可复制内容" },
                     style = MaterialTheme.typography.bodyMedium
@@ -1391,7 +1392,7 @@ private fun PersonaSwitchDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 480.dp)
+                    .heightIn(max = adaptiveDialogMaxHeight(480.dp))
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
@@ -1492,7 +1493,7 @@ private fun SearchSettingsDialog(
         text = {
             Column(
                 modifier = Modifier
-                    .heightIn(max = 560.dp)
+                    .heightIn(max = adaptiveDialogMaxHeight(560.dp))
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {

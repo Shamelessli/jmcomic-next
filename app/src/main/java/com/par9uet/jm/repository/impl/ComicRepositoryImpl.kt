@@ -26,6 +26,8 @@ import com.par9uet.jm.retrofit.service.ComicService
 import com.par9uet.jm.storage.CookieStorage
 import com.par9uet.jm.store.InitManager
 import com.par9uet.jm.store.LocalSettingManager
+import com.par9uet.jm.network.DohManager
+import com.par9uet.jm.utils.applyTlsCompat
 import com.par9uet.jm.utils.log
 import com.par9uet.jm.utils.logError
 import io.github.jukomu.jmcomic.api.enums.ClientType
@@ -68,17 +70,21 @@ class ComicRepositoryImpl(
     private val localSettingManager: LocalSettingManager,
     private val cookieStorage: CookieStorage,
     private val embeddedClientManager: EmbeddedClientManager,
+    private val dohManager: DohManager,
 ) : BaseRepository(initManager), ComicRepository {
 
     companion object {
         private val imageCache = mutableMapOf<Int, List<JmImage>>()
-        private val cleanHttpClient: OkHttpClient by lazy {
-            OkHttpClient.Builder()
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(30, TimeUnit.SECONDS)
-                .followRedirects(true)
-                .build()
-        }
+    }
+
+    private val cleanHttpClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .dns(dohManager)
+            .applyTlsCompat()
+            .build()
     }
 
     private fun fixImageUrl(url: String): String {
@@ -173,8 +179,19 @@ class ComicRepositoryImpl(
 
     override suspend fun getComicPicList(id: Int, shunt: String): NetWorkResult<ComicPicListResponse> {
         if (useEmbeddedApi() && !useNetworkApiForImages()) {
-            return getComicPicListFromEmbeddedApi(id)
+            val embeddedResult = getComicPicListFromEmbeddedApi(id)
+            if (embeddedResult is NetWorkResult.Success<ComicPicListResponse>) return embeddedResult
+            // The embedded client can fail while parsing the second scramble
+            // request even though the chapter HTML endpoint is reachable. Use
+            // the chapter-specific network endpoint as a compatibility path;
+            // this is still keyed by the selected chapter id and cannot reuse
+            // the album's first chapter.
+            return getComicPicListFromNetworkApi(id, shunt)
         }
+        return getComicPicListFromNetworkApi(id, shunt)
+    }
+
+    private suspend fun getComicPicListFromNetworkApi(id: Int, shunt: String): NetWorkResult<ComicPicListResponse> {
         return when (val res = safeStringCall {
             service.getComicPicList(id, shunt)
         }) {
@@ -577,10 +594,25 @@ class ComicRepositoryImpl(
             try {
                 withEmbeddedClient { client ->
                     val photo = runCatching { client.getPhoto(id.toString()) }.getOrNull()
-                    val images = photo?.images()?.takeIf { it.isNotEmpty() }
-                        ?: client.getComicRead(id.toString()).images().orEmpty()
+                    val chapterImages = photo?.images().orEmpty()
+                    // Some domains intermittently reject `/chapter`; retain a
+                    // compatibility fallback, but accept it only when every
+                    // returned image explicitly belongs to this chapter. This
+                    // prevents an album-level response from silently becoming
+                    // chapter one's cache while keeping downloads functional.
+                    val validForChapter: (List<io.github.jukomu.jmcomic.api.model.JmImage>) -> Boolean = { images ->
+                        images.isNotEmpty() && images.all { it.photoId() == id.toString() }
+                    }
+                    val images = if (validForChapter(chapterImages)) {
+                        chapterImages
+                    } else {
+                        runCatching { client.getComicRead(id.toString()).images().orEmpty() }
+                            .getOrDefault(emptyList())
+                            .takeIf(validForChapter)
+                            .orEmpty()
+                    }
                     if (images.isEmpty()) {
-                        NetWorkResult.Error("内置 API 未返回图片列表")
+                        NetWorkResult.Error("内置 API 未返回章节图片（章节 ID：$id）")
                     } else {
                         synchronized(imageCache) {
                             imageCache[id] = images
@@ -686,7 +718,8 @@ class ComicRepositoryImpl(
             },
             series_id = seriesId().orEmpty(),
             price = price().orEmpty(),
-            purchased = purchased().equals("true", ignoreCase = true)
+            purchased = purchased().equals("true", ignoreCase = true),
+            image = image().orEmpty(),
         )
     }
 

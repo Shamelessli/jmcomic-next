@@ -8,6 +8,7 @@ import com.par9uet.jm.utils.applyTlsCompat
 import okhttp3.ConnectionSpec
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
+import okhttp3.Dns
 import okhttp3.TlsVersion
 
 private val cdnHeaderInterceptor = Interceptor { chain ->
@@ -18,11 +19,12 @@ private val cdnHeaderInterceptor = Interceptor { chain ->
     chain.proceed(request)
 }
 
-fun createAsyncImageLoader(context: Context): ImageLoader {
+fun createAsyncImageLoader(context: Context, dns: Dns): ImageLoader {
     return ImageLoader.Builder(context)
         .okHttpClient {
             OkHttpClient.Builder()
                 .addInterceptor(cdnHeaderInterceptor)
+                .dns(dns)
                 .applyTlsCompat()
                 .build()
         }

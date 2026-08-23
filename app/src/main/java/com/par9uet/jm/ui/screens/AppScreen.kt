@@ -70,6 +70,7 @@ fun AppScreen(
             composable(route = "userHistoryComic") { UserHistoryComicScreen() }
             composable(route = "userHistoryComment") { UserHistoryCommentScreen() }
             composable(route = "appLocalSetting") { LocalSettingScreen() }
+            composable(route = "dohSetting") { DohSettingScreen() }
             composable(route = "appLockSetting") { AppLockSettingScreen() }
             composable(route = "colorPalette") { ColorPaletteScreen() }
             composable(route = "blockedTags") { BlockedTagsScreen() }

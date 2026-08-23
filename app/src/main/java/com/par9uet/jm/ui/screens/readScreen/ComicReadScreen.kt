@@ -71,6 +71,7 @@ import com.par9uet.jm.store.LocalSettingManager
 import com.par9uet.jm.store.ReadHistoryManager
 import com.par9uet.jm.store.UserManager
 import com.par9uet.jm.ui.screens.LocalMainNavController
+import com.par9uet.jm.ui.components.adaptiveDialogMaxHeight
 import com.par9uet.jm.ui.viewModel.ComicReadViewModel
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.getKoin
@@ -474,7 +475,7 @@ private fun ChapterCachePickerDialog(
                         )
                         Text(text = if (allSelected) "取消全选" else "全选")
                     }
-                    LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
+                    LazyColumn(modifier = Modifier.heightIn(max = adaptiveDialogMaxHeight())) {
                         itemsIndexed(chapters) { index, chapter ->
                             val selected = chapter.id in selectedChapterIds
                             Row(
@@ -719,7 +720,7 @@ private fun ChapterPickerDialog(
             } else {
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier.heightIn(max = 420.dp)
+                    modifier = Modifier.heightIn(max = adaptiveDialogMaxHeight())
                 ) {
                     itemsIndexed(chapters) { index, chapter ->
                         val selected = chapter.id == currentChapterId
@@ -765,4 +766,3 @@ private fun ChapterPickerDialog(
         }
     )
 }
-

@@ -5,6 +5,12 @@ const val COMIC_API_SOURCE_NETWORK = "network"
 const val COMIC_API_SOURCE_MIXED = "mixed"
 const val APP_LOCK_TYPE_PASSWORD = "password"
 const val APP_LOCK_TYPE_PATTERN = "pattern"
+const val APP_LOCK_METHOD_BIOMETRIC = "biometric"
+const val APP_LOCK_RULE_ANY = "any"
+const val APP_LOCK_RULE_REQUIRED = "required"
+const val CACHE_INTEGRITY_CHECK_OFF = "off"
+const val CACHE_INTEGRITY_CHECK_PARTIAL = "partial"
+const val CACHE_INTEGRITY_CHECK_FULL = "full"
 
 data class BlockedTagTemplate(
     val name: String = "",
@@ -18,6 +24,8 @@ data class LocalSetting(
         COMIC_API_SOURCE_MIXED,
     ),
     val comicApiSource: String = COMIC_API_SOURCE_BUILTIN,
+    // Empty means the app-private default cache directory; otherwise this is a persisted SAF tree URI.
+    val downloadTreeUri: String = "",
     // 偏好推荐开关：开启后将请求网络 API 获取基于登录账号的个性化推荐，可能不稳定
     val preferenceRecommendEnabled: Boolean = false,
     val apiList: List<String> = listOf(
@@ -28,6 +36,15 @@ data class LocalSetting(
         "https://www.jmeadpoolcdn.life"
     ),
     val api: String = apiList[0],
+    // DoH is off by default. It can be started manually or restored on app startup.
+    val dohEnabled: Boolean = false,
+    val dohAutoStart: Boolean = false,
+    val dohServerId: String = "tencent",
+    val dohCustomServerName: String = "",
+    val dohCustomServerUrl: String = "",
+    // Include user-installed device CA certificates when validating the DoH endpoint.
+    val dohUseDeviceCertificates: Boolean = true,
+    val dohPreferIpv6: Boolean = false,
     val themeList: List<String> = listOf(
         "auto",
         "light",
@@ -52,6 +69,8 @@ data class LocalSetting(
     val showComicPageReadTip: Boolean = true,
     val showComicCacheNotification: Boolean = true,
     val showComicCacheNotificationName: Boolean = true,
+    // 缓存路径迁移到后台后是否显示持续进度通知。
+    val showCacheMigrationNotification: Boolean = true,
     val showAiEntry: Boolean = false,
     val blockedTagList: List<String> = listOf(),
     val blockedTagTemplateList: List<BlockedTagTemplate> = listOf(),
@@ -64,6 +83,13 @@ data class LocalSetting(
     val appLockPattern: String = "",
     // 解锁模式："password" | "pattern" | "both"
     val appLockUnlockMode: String = APP_LOCK_TYPE_PASSWORD,
+    // 生物识别仅作为快捷解锁；密码或图形始终保留为保底方式
+    val appLockBiometricEnabled: Boolean = false,
+    val appLockFingerprintEnabled: Boolean = false,
+    val appLockFaceEnabled: Boolean = false,
+    // any：任一已启用方式通过；required：必须通过 requiredMethods 中的全部方式
+    val appLockUnlockRule: String = APP_LOCK_RULE_ANY,
+    val appLockRequiredMethods: List<String> = emptyList(),
     val nsfwWarningDismissed: Boolean = false,
     // 是否已完成首次启动引导
     val onboardingCompleted: Boolean = false,
@@ -90,6 +116,8 @@ data class LocalSetting(
     val readMemoryOptEnabled: Boolean = false,
     // 阅读并发解码上限：仅在 readMemoryOptEnabled 开启时生效，推荐值 2
     val readDecodeConcurrency: Int = 2,
+    // 缓存完整性检查：off | partial（配置与封面）| full（配置、封面与全部图片页）
+    val cacheIntegrityCheckMode: String = CACHE_INTEGRITY_CHECK_OFF,
     // 首页推荐排除标签：带有这些标签的漫画不会出现在首页推荐中
     val homeExcludedTags: List<String> = listOf(),
 )

@@ -1,6 +1,7 @@
 package com.par9uet.jm.ui.screens
 
 import android.net.Uri
+import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -30,6 +32,9 @@ import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.CloudUpload
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Circle
+import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.Fingerprint
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -56,14 +61,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
 import com.par9uet.jm.data.models.APP_LOCK_TYPE_PASSWORD
 import com.par9uet.jm.data.models.APP_LOCK_TYPE_PATTERN
 import com.par9uet.jm.data.models.Comic
 import com.par9uet.jm.data.models.ComicChapter
+import com.par9uet.jm.network.ComicCoverUrlResolver
+import com.par9uet.jm.cache.setDownloadTreeUri
 import com.par9uet.jm.database.dao.DownloadComicDao
 import com.par9uet.jm.store.BACKUP_PROTECTION_BOTH
-import com.par9uet.jm.store.BACKUP_PROTECTION_NONE
 import com.par9uet.jm.store.BACKUP_PROTECTION_PASSWORD
 import com.par9uet.jm.store.BACKUP_PROTECTION_PATTERN
 import com.par9uet.jm.store.BackupContentOptions
@@ -78,8 +83,15 @@ import com.par9uet.jm.storage.AiChatStorage
 import com.par9uet.jm.storage.PersonaStorage
 import com.par9uet.jm.store.ToastManager
 import com.par9uet.jm.ui.components.CommonScaffold
+import com.par9uet.jm.ui.components.FallbackAsyncImage
 import com.par9uet.jm.ui.components.SelectDialog
 import com.par9uet.jm.ui.components.SelectOption
+import com.par9uet.jm.ui.components.adaptiveDialogMaxHeight
+import com.par9uet.jm.utils.authenticateWithBiometrics
+import com.par9uet.jm.utils.canUseBiometricAuth
+import com.par9uet.jm.utils.createBackupBiometricBinding
+import com.par9uet.jm.utils.findFragmentActivity
+import com.par9uet.jm.utils.verifyBackupBiometricBinding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -89,15 +101,14 @@ import java.util.Date
 import java.util.Locale
 
 private enum class BackupStep {
-    None, SelectContent, SelectProtection, SetPassword, SetPattern
+    None, SelectContent, SelectProtection, SetPassword, SetPattern, OfferBiometric
 }
 
 private enum class RestoreStep {
-    None, VerifyPassword, VerifyPattern, SelectContent, SelectComicCache
+    None, OfferBiometric, VerifyPassword, VerifyPattern, SelectContent, SelectComicCache
 }
 
 private val protectionOptionList = listOf(
-    SelectOption("无保护", BACKUP_PROTECTION_NONE),
     SelectOption("仅密码", BACKUP_PROTECTION_PASSWORD),
     SelectOption("仅图案", BACKUP_PROTECTION_PATTERN),
     SelectOption("密码 + 图案", BACKUP_PROTECTION_BOTH),
@@ -115,6 +126,8 @@ fun BackupRestoreScreen(
     toastManager: ToastManager = getKoin().get(),
 ) {
     val context = LocalContext.current
+    val activity = remember(context) { context.findFragmentActivity() }
+    val biometricAvailable = remember(context) { canUseBiometricAuth(context) }
     val scope = rememberCoroutineScope()
     val localSetting by localSettingManager.localSettingState.collectAsState()
     val remoteSetting by remoteSettingManager.remoteSettingState.collectAsState()
@@ -123,10 +136,11 @@ fun BackupRestoreScreen(
     // 备份流程状态
     var backupStep by remember { mutableStateOf(BackupStep.None) }
     var contentOptions by remember { mutableStateOf(BackupContentOptions()) }
-    var pendingProtectionType by remember { mutableStateOf(BACKUP_PROTECTION_NONE) }
+    var pendingProtectionType by remember { mutableStateOf(BACKUP_PROTECTION_PASSWORD) }
     var pendingPassword by remember { mutableStateOf<String?>(null) }
     var pendingPattern by remember { mutableStateOf<String?>(null) }
     var pendingCreateDocument by remember { mutableStateOf(false) }
+    var pendingBiometricBinding by remember { mutableStateOf<String?>(null) }
     // 缓存备份在内存中暂存，等待写入文件时一起打包
     var pendingComicCacheBackup by remember { mutableStateOf<ComicCacheBackup?>(null) }
 
@@ -139,9 +153,10 @@ fun BackupRestoreScreen(
     fun resetBackupState() {
         backupStep = BackupStep.None
         contentOptions = BackupContentOptions()
-        pendingProtectionType = BACKUP_PROTECTION_NONE
+        pendingProtectionType = BACKUP_PROTECTION_PASSWORD
         pendingPassword = null
         pendingPattern = null
+        pendingBiometricBinding = null
         pendingComicCacheBackup = null
     }
 
@@ -162,14 +177,15 @@ fun BackupRestoreScreen(
             runCatching {
                 withContext(Dispatchers.IO) {
                     val json = backupManager.createBackup(
-                        localSetting = if (opts.includeLocalSetting) localSetting else null,
+                        localSetting = if (opts.includeLocalSetting || opts.includeDownloadPath) localSetting else null,
                         aiChats = if (opts.includeAiChats) aiChatStorage.get() else null,
                         personas = if (opts.includePersonas) personaStorage.get() else null,
                         comicCache = if (opts.includeComicCache) cacheBackup else null,
                         options = opts,
                         protectionType = prot,
                         password = pwd,
-                        pattern = pat
+                        pattern = pat,
+                        biometricBinding = pendingBiometricBinding,
                     )
                     if (!backupManager.writeToUri(context, uri, json)) {
                         error("写入备份文件失败")
@@ -178,6 +194,10 @@ fun BackupRestoreScreen(
             }.onSuccess {
                 toastManager.showAsync("备份成功")
             }.onFailure {
+                // 系统保存器会先创建空文件；写入失败时删除它，避免留下无法恢复的 0KB 备份。
+                withContext(Dispatchers.IO) {
+                    runCatching { DocumentsContract.deleteDocument(context.contentResolver, uri) }
+                }
                 toastManager.showAsync("备份失败：${it.message ?: "未知错误"}")
             }
             resetBackupState()
@@ -201,6 +221,8 @@ fun BackupRestoreScreen(
             }.onSuccess { backup ->
                 restoreBackup = backup
                 restoreStep = when {
+                    biometricAvailable && activity != null && verifyBackupBiometricBinding(context, backup.meta.biometricBinding) ->
+                        RestoreStep.OfferBiometric
                     backupManager.needsPassword(backup) -> RestoreStep.VerifyPassword
                     backupManager.needsPattern(backup) -> RestoreStep.VerifyPattern
                     else -> RestoreStep.SelectContent
@@ -224,13 +246,39 @@ fun BackupRestoreScreen(
         restoreStep = RestoreStep.SelectContent
     }
 
+    fun proceedAfterBaseProtection() {
+        backupStep = if (biometricAvailable && activity != null) {
+            BackupStep.OfferBiometric
+        } else {
+            pendingCreateDocument = true
+            BackupStep.None
+        }
+    }
+
+    fun useRestoreFallback() {
+        val backup = restoreBackup ?: return
+        restoreStep = when {
+            backupManager.needsPassword(backup) -> RestoreStep.VerifyPassword
+            backupManager.needsPattern(backup) -> RestoreStep.VerifyPattern
+            else -> RestoreStep.SelectContent
+        }
+    }
+
     fun applyRestore(backup: BackupFile, options: BackupContentOptions) {
         runCatching {
             val applied = mutableListOf<String>()
-            if (options.includeLocalSetting) {
+            if (options.includeLocalSetting || options.includeDownloadPath) {
                 val setting = backupManager.extractLocalSetting(backup)
                 if (setting != null) {
-                    localSettingManager.applyLocalSetting(setting)
+                    if (options.includeLocalSetting) {
+                        localSettingManager.applyLocalSetting(setting, options.includeDownloadPath)
+                    } else if (options.includeDownloadPath) {
+                        localSettingManager.updateDownloadTreeUri(setting.downloadTreeUri)
+                    }
+                    if (options.includeDownloadPath) {
+                        setDownloadTreeUri(context, setting.downloadTreeUri)
+                        applied += "\u7f13\u5b58\u8def\u5f84"
+                    }
                     applied += "本地设置"
                 }
             }
@@ -317,7 +365,7 @@ fun BackupRestoreScreen(
                 ActionCard(
                     icon = Icons.Rounded.CloudUpload,
                     title = "备份数据",
-                    description = "选择需要备份的内容（本地设置 / AI 聊天 / 人格面具 / 缓存目录），再选择是否设置密码/图案保护",
+                    description = "选择备份内容并强制设置密码或图形；可额外启用本机指纹/面容快捷验证",
                     onClick = {
                         resetBackupState()
                         backupStep = BackupStep.SelectContent
@@ -386,10 +434,6 @@ fun BackupRestoreScreen(
                 onSelect = { type ->
                     pendingProtectionType = type
                     when (type) {
-                        BACKUP_PROTECTION_NONE -> {
-                            pendingCreateDocument = true
-                            backupStep = BackupStep.None
-                        }
                         BACKUP_PROTECTION_PASSWORD -> {
                             backupStep = BackupStep.SetPassword
                         }
@@ -412,11 +456,10 @@ fun BackupRestoreScreen(
                 passwordLength = 4,
                 onConfirm = { pwd ->
                     pendingPassword = pwd
-                    backupStep = if (pendingProtectionType == BACKUP_PROTECTION_BOTH) {
-                        BackupStep.SetPattern
+                    if (pendingProtectionType == BACKUP_PROTECTION_BOTH) {
+                        backupStep = BackupStep.SetPattern
                     } else {
-                        pendingCreateDocument = true
-                        BackupStep.None
+                        proceedAfterBaseProtection()
                     }
                 },
                 onDismiss = { resetBackupState() }
@@ -429,14 +472,66 @@ fun BackupRestoreScreen(
                 lockType = APP_LOCK_TYPE_PATTERN,
                 onConfirm = { pattern ->
                     pendingPattern = pattern
-                    pendingCreateDocument = true
-                    backupStep = BackupStep.None
+                    proceedAfterBaseProtection()
                 },
                 onDismiss = { resetBackupState() }
             )
         }
 
+        if (backupStep == BackupStep.OfferBiometric) {
+            AlertDialog(
+                icon = { Icon(Icons.Rounded.Fingerprint, contentDescription = null) },
+                title = { Text("启用指纹或面容快捷验证？") },
+                text = { Text("密码或图形仍会强制保留，用于没有生物识别的手机或跨设备恢复。生物识别仅在当前设备安装中可用。") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        authenticateWithBiometrics(
+                            activity = activity!!,
+                            title = "确认启用生物识别",
+                            subtitle = "以后可用指纹或面容快捷验证此备份",
+                            onSuccess = {
+                                pendingBiometricBinding = createBackupBiometricBinding(context)
+                                pendingCreateDocument = true
+                                backupStep = BackupStep.None
+                            },
+                            onError = toastManager::showAsync,
+                        )
+                    }) { Text("启用") }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        pendingCreateDocument = true
+                        backupStep = BackupStep.None
+                    }) { Text("跳过") }
+                },
+                onDismissRequest = { resetBackupState() },
+            )
+        }
+
         // ============== 恢复流程 ==============
+
+        if (restoreStep == RestoreStep.OfferBiometric) {
+            AlertDialog(
+                icon = { Icon(Icons.Rounded.Fingerprint, contentDescription = null) },
+                title = { Text("使用指纹或面容验证") },
+                text = { Text("也可以改用创建备份时设置的密码或图形。") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        authenticateWithBiometrics(
+                            activity = activity!!,
+                            title = "验证备份",
+                            subtitle = "使用指纹或面容继续恢复",
+                            onSuccess = { restoreStep = RestoreStep.SelectContent },
+                            onError = toastManager::showAsync,
+                        )
+                    }) { Text("验证") }
+                },
+                dismissButton = {
+                    TextButton(onClick = ::useRestoreFallback) { Text("使用密码或图形") }
+                },
+                onDismissRequest = { cancelRestore() },
+            )
+        }
 
         // 核验密码
         if (restoreStep == RestoreStep.VerifyPassword) {
@@ -506,7 +601,7 @@ fun BackupRestoreScreen(
                     onConfirm = { selected ->
                         // 先应用其他选项（localSetting/aiChats/personas），再恢复缓存
                         val opts = restoreContentOptions
-                        if (opts.includeLocalSetting || opts.includeAiChats || opts.includePersonas) {
+                        if (opts.includeLocalSetting || opts.includeDownloadPath || opts.includeAiChats || opts.includePersonas) {
                             applyRestore(backup, opts.copy(includeComicCache = false))
                         } else {
                             restoreBackup = null
@@ -563,6 +658,13 @@ private fun BackupContentPickerDialog(
                     onCheckedChange = { onChange(options.copy(includeLocalSetting = it)) }
                 )
                 ContentToggleRow(
+                    icon = Icons.Rounded.Folder,
+                    title = "缓存路径",
+                    subtitle = "单独备份默认或自定义缓存目录设置",
+                    checked = options.includeDownloadPath,
+                    onCheckedChange = { onChange(options.copy(includeDownloadPath = it)) }
+                )
+                ContentToggleRow(
                     icon = Icons.Rounded.Chat,
                     title = "AI 聊天记录",
                     subtitle = "全部 AI 对话历史",
@@ -605,6 +707,7 @@ private fun RestoreContentPickerDialog(
     onDismiss: () -> Unit,
 ) {
     var localSettingOn by remember { mutableStateOf(backup.meta.includeLocalSetting) }
+    var downloadPathOn by remember { mutableStateOf(backup.meta.includeDownloadPath) }
     var aiChatsOn by remember { mutableStateOf(backup.meta.includeAiChats) }
     var personasOn by remember { mutableStateOf(backup.meta.includePersonas) }
     var comicCacheOn by remember { mutableStateOf(backup.meta.includeComicCache) }
@@ -638,6 +741,15 @@ private fun RestoreContentPickerDialog(
                         subtitle = "会覆盖当前本地设置",
                         checked = localSettingOn,
                         onCheckedChange = { localSettingOn = it }
+                    )
+                }
+                if (backup.meta.includeDownloadPath) {
+                    ContentToggleRow(
+                        icon = Icons.Rounded.Folder,
+                        title = "缓存路径",
+                        subtitle = "恢复缓存目录设置",
+                        checked = downloadPathOn,
+                        onCheckedChange = { downloadPathOn = it }
                     )
                 }
                 if (backup.meta.includeAiChats) {
@@ -678,6 +790,7 @@ private fun RestoreContentPickerDialog(
                         onConfirm(
                             BackupContentOptions(
                                 includeLocalSetting = localSettingOn,
+                                includeDownloadPath = downloadPathOn,
                                 includeAiChats = aiChatsOn,
                                 includePersonas = personasOn,
                                 includeComicCache = comicCacheOn,
@@ -784,7 +897,7 @@ private fun InfoCard() {
                 Text(
                     text = "备份时可选择：本地设置、AI 聊天记录、人格面具、缓存目录。\n" +
                         "缓存目录只备份漫画编号与章节信息，不备份图片文件；恢复时可选择具体要重新缓存的漫画。\n" +
-                        "为安全考虑，备份不会保存应用锁的密码与图案明文，且恢复时不会覆盖当前设备的应用锁状态。",
+                        "每份新备份必须设置密码或图形作为跨设备恢复保底；指纹/面容仅是当前设备的可选快捷验证。备份不会保存应用锁凭据，恢复也不会覆盖应用锁状态。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSecondaryContainer
                 )
@@ -1042,7 +1155,7 @@ private fun ComicCacheRestoreDialog(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(360.dp),
+                        .heightIn(max = adaptiveDialogMaxHeight(360.dp)),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(groups, key = { it.id }) { group ->
@@ -1089,9 +1202,12 @@ private fun ComicRestoreRow(
     imgHost: String,
     onToggle: () -> Unit,
 ) {
-    val coverUrl = if (imgHost.isNotBlank()) {
-        "${imgHost}/media/albums/${group.id}_3x4.jpg"
-    } else ""
+    val coverUrls = ComicCoverUrlResolver.resolve(
+        comicId = group.id,
+        apiImage = "",
+        configuredImageHost = imgHost,
+    )
+    val imageLoader: coil.ImageLoader = getKoin().get()
     val containerColor = if (checked) MaterialTheme.colorScheme.primaryContainer
     else MaterialTheme.colorScheme.surfaceContainer
     val contentColor = if (checked) MaterialTheme.colorScheme.onPrimaryContainer
@@ -1118,9 +1234,10 @@ private fun ComicRestoreRow(
                     .clip(RoundedCornerShape(8.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                if (coverUrl.isNotBlank()) {
-                    AsyncImage(
-                        model = coverUrl,
+                if (coverUrls.isNotEmpty()) {
+                    FallbackAsyncImage(
+                        coverUrls = coverUrls,
+                        imageLoader = imageLoader,
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()

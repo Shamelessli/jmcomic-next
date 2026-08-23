@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Comment
@@ -27,6 +28,7 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -47,12 +49,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
-import com.par9uet.jm.R
 import com.par9uet.jm.data.models.User
 import com.par9uet.jm.store.RemoteSettingManager
 import com.par9uet.jm.store.UserManager
@@ -82,7 +82,7 @@ private fun MenuItem(
         leadingContent = {
             Surface(
                 modifier = Modifier.size(40.dp),
-                shape = CircleShape,
+                shape = RoundedCornerShape(12.dp),
                 color = containerColor,
             ) {
                 Box(contentAlignment = Alignment.Center) {
@@ -103,9 +103,10 @@ private fun MenuItem(
         },
         trailingContent = {
             Icon(
-                painter = painterResource(R.drawable.chevron_right_icon),
+                imageVector = Icons.Rounded.ChevronRight,
                 contentDescription = null,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(22.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     )
@@ -293,15 +294,26 @@ private fun LoginHeader(onLogin: () -> Unit) {
 }
 
 @Composable
-private fun MenuGroup(content: @Composable () -> Unit) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        tonalElevation = 1.dp
-    ) {
-        Column {
-            content()
+private fun MenuGroup(
+    title: String,
+    content: @Composable () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            modifier = Modifier.padding(horizontal = 4.dp),
+            text = title,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            tonalElevation = 0.dp
+        ) {
+            Column {
+                content()
+            }
         }
     }
 }
@@ -310,7 +322,8 @@ private fun MenuGroup(content: @Composable () -> Unit) {
 private fun MenuDivider() {
     HorizontalDivider(
         modifier = Modifier.padding(start = 72.dp),
-        color = MaterialTheme.colorScheme.outlineVariant
+        thickness = 1.dp,
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f)
     )
 }
 
@@ -366,7 +379,7 @@ fun UserScreen(
                 }
             }
 
-            MenuGroup {
+            MenuGroup(title = "我的内容") {
                 MenuItem(
                     icon = Icons.Default.Download,
                     label = "下载中心",
@@ -406,7 +419,7 @@ fun UserScreen(
                 )
             }
 
-            MenuGroup {
+            MenuGroup(title = "应用") {
                 MenuItem(
                     icon = Icons.Default.Settings,
                     label = "设置",

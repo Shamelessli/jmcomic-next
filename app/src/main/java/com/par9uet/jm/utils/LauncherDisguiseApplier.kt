@@ -10,7 +10,11 @@ class LauncherDisguiseApplier(
 ) {
     fun apply(disguise: LauncherDisguise) {
         val packageManager = context.packageManager
-        val componentClassPrefix = context.applicationContext::class.java.packageName
+        // Manifest aliases are resolved from the app namespace (com.par9uet.jm),
+        // which can differ from the runtime applicationId (jmcomicoi.net).
+        // ApplicationInfo.className is available on Android 6 and avoids Class.getPackageName().
+        val componentClassPrefix = context.applicationInfo.className
+            ?.substringBeforeLast('.', context.packageName)
         LauncherDisguise.entries.forEach { item ->
             runCatching {
                 packageManager.setComponentEnabledSetting(

@@ -8,6 +8,7 @@ import com.par9uet.jm.store.DownloadManager
 import com.par9uet.jm.ui.viewModel.DownloadComicDetailViewModel
 import com.par9uet.jm.ui.viewModel.DownloadViewModel
 import com.par9uet.jm.worker.DownloadComicWorker
+import com.par9uet.jm.worker.CacheMigrationWorker
 import org.koin.android.ext.koin.androidContext
 import org.koin.androidx.workmanager.dsl.worker
 import org.koin.core.module.dsl.viewModel
@@ -30,7 +31,8 @@ val databaseModule = module {
     viewModel { DownloadViewModel(get(), get()) }
     viewModel { DownloadComicDetailViewModel(get()) }
 
-    worker { DownloadComicWorker(get(), get(), get(), get(), get(), get(), get()) }
+    worker { DownloadComicWorker(get(), get(), get(), get(), get(), get(), get(), get()) }
+    worker { CacheMigrationWorker(get(), get(), get(), get()) }
 }
 
 private val MIGRATION_2_3 = object : Migration(2, 3) {

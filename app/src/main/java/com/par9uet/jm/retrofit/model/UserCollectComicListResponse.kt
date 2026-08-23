@@ -48,6 +48,7 @@ data class UserCollectComicListResponse(
                 isCollect = false,
                 relateComicList = listOf(),
                 comicChapterList = listOf(),
+                coverUrl = it.image,
                 price = 0,
                 isBuy = false,
             )

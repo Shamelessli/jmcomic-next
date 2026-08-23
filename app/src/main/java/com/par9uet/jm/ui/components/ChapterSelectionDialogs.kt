@@ -39,12 +39,14 @@ fun ChapterMultiSelectDialog(
     secondaryConfirmText: String? = null,
     onSecondaryConfirm: (() -> Unit)? = null,
 ) {
-    val allChapterIds = remember(chapters) { chapters.map { it.id }.toSet() }
-    val allSelected = chapters.isNotEmpty() && selectedChapterIds.containsAll(allChapterIds)
+    val allChapterIds = remember(chapters) {
+        chapters.filter(ComicChapter::isAvailable).map { it.id }.toSet()
+    }
+    val allSelected = allChapterIds.isNotEmpty() && selectedChapterIds.containsAll(allChapterIds)
 
     ChapterDialogLayout(
         title = title,
-        topActionText = if (chapters.isNotEmpty()) {
+        topActionText = if (allChapterIds.isNotEmpty()) {
             if (allSelected) "取消全选" else "全选"
         } else {
             null
@@ -81,14 +83,16 @@ fun ChapterMultiSelectDialog(
             )
         } else {
             LazyColumn(
-                modifier = Modifier.heightIn(max = 420.dp),
+                modifier = Modifier.heightIn(max = adaptiveDialogMaxHeight()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 itemsIndexed(chapters, key = { _, chapter -> chapter.id }) { index, chapter ->
                     val selected = chapter.id in selectedChapterIds
                     SelectableChapterCard(
-                        title = chapter.name.ifBlank { "第 ${index + 1} 章" },
+                        title = chapter.name.ifBlank { "第 ${index + 1} 章" } +
+                            if (chapter.isAvailable) "" else "（缓存中）",
                         selected = selected,
+                        enabled = chapter.isAvailable,
                         onClick = {
                             onSelectedChange(
                                 if (selected) {
@@ -101,6 +105,7 @@ fun ChapterMultiSelectDialog(
                         trailing = {
                             Checkbox(
                                 checked = selected,
+                                enabled = chapter.isAvailable,
                                 onCheckedChange = { checked ->
                                     onSelectedChange(
                                         if (checked) {
@@ -144,13 +149,15 @@ fun ChapterSingleSelectDialog(
             )
         } else {
             LazyColumn(
-                modifier = Modifier.heightIn(max = 420.dp),
+                modifier = Modifier.heightIn(max = adaptiveDialogMaxHeight()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 itemsIndexed(chapters, key = { _, chapter -> chapter.id }) { index, chapter ->
                     SelectableChapterCard(
-                        title = chapter.name.ifBlank { "第 ${index + 1} 章" },
+                        title = chapter.name.ifBlank { "第 ${index + 1} 章" } +
+                            if (chapter.isAvailable) "" else "（缓存中）",
                         selected = chapter.id == currentChapterId,
+                        enabled = chapter.isAvailable,
                         onClick = { onSelect(chapter) }
                     )
                 }
@@ -210,21 +217,26 @@ private fun ChapterDialogLayout(
 private fun SelectableChapterCard(
     title: String,
     selected: Boolean,
+    enabled: Boolean = true,
     onClick: () -> Unit,
     trailing: @Composable (() -> Unit)? = null,
 ) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick),
         shape = RoundedCornerShape(22.dp),
         color = if (selected) {
             MaterialTheme.colorScheme.primaryContainer
+        } else if (!enabled) {
+            MaterialTheme.colorScheme.surfaceContainerLowest.copy(alpha = 0.55f)
         } else {
             MaterialTheme.colorScheme.surfaceContainerLowest
         },
         contentColor = if (selected) {
             MaterialTheme.colorScheme.onPrimaryContainer
+        } else if (!enabled) {
+            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
         } else {
             MaterialTheme.colorScheme.onSurface
         },

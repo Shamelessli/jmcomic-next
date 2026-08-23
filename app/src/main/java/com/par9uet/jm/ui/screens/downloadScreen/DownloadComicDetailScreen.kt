@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -35,6 +36,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.animation.core.animateFloatAsState
@@ -53,11 +55,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil.ImageLoader
 import coil.compose.AsyncImage
-import com.par9uet.jm.store.RemoteSettingManager
 import com.par9uet.jm.store.ToastManager
 import com.par9uet.jm.store.DownloadManager
+import com.par9uet.jm.store.DownloadProgressMessageStore
+import com.par9uet.jm.store.LocalSettingManager
 import com.par9uet.jm.ui.components.ChapterMultiSelectDialog
 import com.par9uet.jm.ui.components.ChapterSingleSelectDialog
 import com.par9uet.jm.ui.components.ComicContentTag
@@ -69,7 +75,17 @@ import com.par9uet.jm.utils.exportComicsToMergedPdf
 import com.par9uet.jm.utils.exportComicsToSeparatePdf
 import com.par9uet.jm.utils.formatBytes
 import com.par9uet.jm.utils.getCachedComicInfo
+import com.par9uet.jm.cache.isDocumentCachePath
+import com.par9uet.jm.cache.cachePathExists
+import com.par9uet.jm.cache.cachePathHasContent
+import com.par9uet.jm.cache.listComicImagePaths
+import com.par9uet.jm.cache.CacheIntegrityResult
+import com.par9uet.jm.cache.checkComicCacheIntegrity
+import com.par9uet.jm.data.models.CACHE_INTEGRITY_CHECK_OFF
+import com.par9uet.jm.data.models.CACHE_INTEGRITY_CHECK_FULL
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.koin.androidx.compose.koinViewModel
@@ -85,21 +101,41 @@ fun DownloadComicDetailScreen(
     id: Int,
     viewModel: DownloadComicDetailViewModel = koinViewModel(),
     imageLoader: ImageLoader = getKoin().get(),
-    remoteSettingManager: RemoteSettingManager = getKoin().get(),
     toastManager: ToastManager = getKoin().get(),
-    downloadManager: DownloadManager = getKoin().get()
+    downloadManager: DownloadManager = getKoin().get(),
+    localSettingManager: LocalSettingManager = getKoin().get(),
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val mainNavController = LocalMainNavController.current
     val detailState by viewModel.detailState.collectAsState()
-    val remoteSetting by remoteSettingManager.remoteSettingState.collectAsState()
+    val progressMessages by DownloadProgressMessageStore.messages.collectAsState()
+    val localSetting by localSettingManager.localSettingState.collectAsState()
     val scrollState = rememberScrollState()
     var cachedInfo by remember { mutableStateOf<CachedComicInfo?>(null) }
     var exporting by remember { mutableStateOf(false) }
     var selectedExportChapterIds by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var activeDialog by remember { mutableStateOf<DownloadDetailDialog?>(null) }
     var exportMode by remember { mutableStateOf(PdfExportMode.Merge) }
+    var integrityResult by remember { mutableStateOf(CacheIntegrityResult()) }
+    var forcedIntegrityResult by remember { mutableStateOf<CacheIntegrityResult?>(null) }
+    var forceIntegrityCheckToken by remember { mutableStateOf(0) }
+    var forceIntegrityChecking by remember { mutableStateOf(false) }
+    var dismissedIntegritySignature by remember { mutableStateOf<String?>(null) }
+    var integrityRefreshToken by remember { mutableStateOf(0) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    // 文件管理器删除缓存不会触发 Room 状态变化。重新回到应用时强制重扫，
+    // 这样删除单页、全部图片或整个章节目录都会立即出现完整性提示。
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner, localSetting.cacheIntegrityCheckMode) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                integrityRefreshToken++
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
@@ -157,13 +193,21 @@ fun DownloadComicDetailScreen(
         viewModel.load(id)
     }
 
-    LaunchedEffect(detailState.completeItems, detailState.cachePath) {
+    LaunchedEffect(
+        detailState.completeItems,
+        detailState.cachePath,
+        localSetting.cacheIntegrityCheckMode,
+        integrityRefreshToken,
+    ) {
         cachedInfo = if (detailState.completeItems.isEmpty()) {
             null
         } else {
             withContext(Dispatchers.IO) {
-                val infos = detailState.completeItems.map { getCachedComicInfo(context, it) }
-                val cacheRoot = detailState.cachePath.takeIf { it.isNotBlank() }?.let(::File)
+                val infos = detailState.completeItems.map { comic ->
+                    runCatching { getCachedComicInfo(context, comic) }
+                        .getOrDefault(CachedComicInfo(0, 0L, null, null))
+                }
+                val cacheRoot = detailState.cachePath.takeIf { it.isNotBlank() && !isDocumentCachePath(it) }?.let(::File)
                 val rootBytes = cacheRoot?.takeIf { it.isDirectory }?.let(::directorySize)
                 CachedComicInfo(
                     imageCount = infos.sumOf { it.imageCount },
@@ -173,6 +217,103 @@ fun DownloadComicDetailScreen(
                 )
             }
         }
+        // Clear the previous result before a new scan. If the screen is
+        // recomposed while the scan is running, the old error must not flash.
+        forcedIntegrityResult = null
+        integrityResult = CacheIntegrityResult()
+        integrityResult = try {
+            withContext(Dispatchers.IO) {
+                // A worker marks the chapter complete before the final config
+                // write. Do not inspect during that short window, otherwise a
+                // healthy download gets a permanent false corruption dialog.
+                if (localSetting.cacheIntegrityCheckMode == CACHE_INTEGRITY_CHECK_OFF ||
+                    detailState.isDownloading || detailState.hasError
+                ) {
+                    CacheIntegrityResult()
+                } else {
+                    delay(300)
+                    suspend fun scan() = checkComicCacheIntegrity(
+                        context = context,
+                        chapters = detailState.completeItems,
+                        mode = localSetting.cacheIntegrityCheckMode,
+                    )
+                    val first = scan()
+                    if (first.isHealthy) {
+                        first
+                    } else {
+                        // A just-finished worker may still be writing the
+                        // manifest. Require two identical results so a normal
+                        // comic never shows a one-frame corruption dialog.
+                        delay(250)
+                        val second = scan()
+                        if (second == first) second else CacheIntegrityResult()
+                    }
+                }
+            }
+        } catch (error: CancellationException) {
+            // Compose cancels LaunchedEffect during navigation/recomposition.
+            // Cancellation is not a cache error and must never become a dialog.
+            throw error
+        } catch (error: Exception) {
+            // Non-cancellation failures are real scan failures and remain
+            // actionable; only Compose cancellation is ignored above.
+            val ids = detailState.completeItems.mapTo(mutableSetOf()) { it.id }
+            CacheIntegrityResult(
+                brokenChapterIds = ids,
+                chapterIds = ids,
+                reason = "缓存完整性检查失败：${error.message ?: "无法读取缓存目录"}",
+            )
+        }
+    }
+
+    // 手动检查始终使用“完全检查”，不受设置中的关闭/部分检查影响。
+    LaunchedEffect(forceIntegrityCheckToken) {
+        if (forceIntegrityCheckToken == 0) return@LaunchedEffect
+        forceIntegrityChecking = true
+        forcedIntegrityResult = try {
+            withContext(Dispatchers.IO) {
+                checkComicCacheIntegrity(
+                    context = context,
+                    chapters = detailState.completeItems,
+                    mode = CACHE_INTEGRITY_CHECK_FULL,
+                )
+            }
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            val ids = detailState.completeItems.mapTo(mutableSetOf()) { it.id }
+            CacheIntegrityResult(
+                brokenChapterIds = ids,
+                chapterIds = ids,
+                reason = "缓存完整性检查失败：${error.message ?: "无法读取缓存目录"}",
+            )
+        }
+        forceIntegrityChecking = false
+    }
+
+    val displayedIntegrityResult = forcedIntegrityResult ?: integrityResult
+    val integritySignature = "${displayedIntegrityResult.brokenChapterIds.sorted().joinToString(",")}:${displayedIntegrityResult.missingCover}:${displayedIntegrityResult.missingConfig}:${displayedIntegrityResult.reason}"
+    if (!displayedIntegrityResult.isHealthy && dismissedIntegritySignature != integritySignature) {
+        AlertDialog(
+            onDismissRequest = { dismissedIntegritySignature = integritySignature },
+            title = { Text("漫画内容损坏") },
+            text = {
+                Text(
+                    displayedIntegrityResult.reason.ifBlank {
+                        "漫画内容损坏，需重新下载。"
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    dismissedIntegritySignature = integritySignature
+                    downloadManager.repairCachedItems(displayedIntegrityResult)
+                }) { Text("重新下载") }
+            },
+            dismissButton = {
+                TextButton(onClick = { dismissedIntegritySignature = integritySignature }) { Text("暂不") }
+            },
+        )
     }
 
     when (activeDialog) {
@@ -272,10 +413,6 @@ fun DownloadComicDetailScreen(
             LocalCover(
                 title = detailState.title,
                 coverPath = detailState.coverPath,
-                remoteCoverUrl = buildRemoteCoverUrl(
-                    imgHost = remoteSetting.imgHost,
-                    comicId = detailState.remoteCoverComicId
-                ),
                 imageLoader = imageLoader
             )
             Column(
@@ -350,7 +487,29 @@ fun DownloadComicDetailScreen(
                         value = formatBytes(cachedInfo?.totalBytes ?: 0L)
                     )
                 }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(
+                        enabled = !forceIntegrityChecking,
+                        onClick = {
+                            forcedIntegrityResult = null
+                            forceIntegrityCheckToken++
+                        },
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.padding(end = 6.dp),
+                        )
+                        Text(if (forceIntegrityChecking) "检查中…" else "完整性检查")
+                    }
+                }
                 if (detailState.isDownloading) {
+                    val progressGroupId = detailState.allItems.firstOrNull()
+                        ?.let { item -> item.groupId.takeIf { it != 0 } ?: item.id }
+                    val progressMessage = progressMessages[progressGroupId].orEmpty()
                     val animatedProgress by animateFloatAsState(
                         targetValue = detailState.groupProgress,
                         label = "downloadProgress"
@@ -372,6 +531,14 @@ fun DownloadComicDetailScreen(
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        if (progressMessage.isNotBlank()) {
+                            Text(
+                                text = progressMessage,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
                             )
                         }
                         LinearProgressIndicator(
@@ -483,18 +650,20 @@ private fun DownloadDetailBottomActions(
 private fun LocalCover(
     title: String,
     coverPath: String,
-    remoteCoverUrl: String?,
     imageLoader: ImageLoader
 ) {
-    val coverModel: Any? = when {
-        coverPath.isNotBlank() -> File(coverPath)
-        !remoteCoverUrl.isNullOrBlank() -> remoteCoverUrl
+    val context = LocalContext.current
+    val localCoverModel: Any? = when {
+        coverPath.isNotBlank() && cachePathExists(context, coverPath) &&
+            cachePathHasContent(context, coverPath) -> {
+            if (isDocumentCachePath(coverPath)) Uri.parse(coverPath) else File(coverPath)
+        }
         else -> null
     }
 
-    if (coverModel != null) {
+    if (localCoverModel != null) {
         AsyncImage(
-            model = coverModel,
+            model = localCoverModel,
             imageLoader = imageLoader,
             contentDescription = "${title}的封面",
             contentScale = ContentScale.Crop,
@@ -509,12 +678,6 @@ private fun LocalCover(
                 .aspectRatio(0.75f)
         )
     }
-}
-
-private fun buildRemoteCoverUrl(imgHost: String, comicId: Int): String? {
-    return imgHost
-        .takeIf { it.isNotBlank() }
-        ?.let { "$it/media/albums/${comicId}_3x4.jpg" }
 }
 
 @Composable

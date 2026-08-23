@@ -8,6 +8,7 @@ import androidx.paging.cachedIn
 import com.par9uet.jm.database.dao.DownloadComicDao
 import com.par9uet.jm.database.model.DownloadComic
 import com.par9uet.jm.store.DownloadManager
+import com.par9uet.jm.store.DownloadProgressMessageStore
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -18,7 +19,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.io.File
 
 data class DownloadFilter(
     val status: String,
@@ -39,6 +39,7 @@ data class DownloadComicGroup(
     val latestTime: Long,
     val status: String,
     val progress: Float,
+    val progressMessage: String = "",
 )
 
 class DownloadViewModel(
@@ -61,16 +62,20 @@ class DownloadViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val completeGroups = downloadComicDao.observeCompleteList()
-        .map(::groupDownloads)
+        .combine(DownloadProgressMessageStore.messages) { items, messages ->
+            groupDownloads(items, messages)
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val activeGroups = combine(activeList, completeList) { activeItems, completeItems ->
-        groupActiveDownloads(activeItems, completeItems)
+    val activeGroups = combine(activeList, completeList, DownloadProgressMessageStore.messages) { activeItems, completeItems, messages ->
+        groupActiveDownloads(activeItems, completeItems, messages)
     }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val errorGroups = downloadComicDao.observeErrorList()
-        .map(::groupDownloads)
+        .combine(DownloadProgressMessageStore.messages) { items, messages ->
+            groupDownloads(items, messages)
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun updateDownloadStatusFilter(status: String) {
@@ -121,7 +126,7 @@ class DownloadViewModel(
         val ids = _editState.value.selectedIds.toList()
         if (ids.isEmpty()) return
         viewModelScope.launch {
-            downloadComicDao.deleteByIds(ids)
+            downloadManager.deleteCachedItems(ids)
             clearSelection()
         }
     }
@@ -133,7 +138,7 @@ class DownloadViewModel(
     fun deleteMany(ids: Set<Int>) {
         if (ids.isEmpty()) return
         viewModelScope.launch {
-            downloadComicDao.deleteByIds(ids.toList())
+            downloadManager.deleteCachedItems(ids)
             _editState.update {
                 val selected = it.selectedIds - ids
                 it.copy(editing = selected.isNotEmpty(), selectedIds = selected)
@@ -201,7 +206,10 @@ class DownloadViewModel(
     }.cachedIn(viewModelScope)
 }
 
-private fun groupDownloads(items: List<DownloadComic>): List<DownloadComicGroup> {
+private fun groupDownloads(
+    items: List<DownloadComic>,
+    progressMessages: Map<Int, String> = emptyMap(),
+): List<DownloadComicGroup> {
     return items
         .groupBy(::downloadGroupId)
         .values
@@ -217,7 +225,8 @@ private fun groupDownloads(items: List<DownloadComic>): List<DownloadComicGroup>
                 chapterCount = sortedItems.size,
                 latestTime = sortedItems.maxOf { it.createTime },
                 status = resolveGroupStatus(sortedItems),
-                progress = sortedItems.map { it.progress.coerceIn(0f, 1f) }.average().toFloat()
+                progress = sortedItems.map { it.progress.coerceIn(0f, 1f) }.average().toFloat(),
+                progressMessage = progressMessages[downloadGroupId(displayItem)].orEmpty(),
             )
         }
         .sortedByDescending { it.latestTime }
@@ -225,13 +234,14 @@ private fun groupDownloads(items: List<DownloadComic>): List<DownloadComicGroup>
 
 private fun groupActiveDownloads(
     activeItems: List<DownloadComic>,
-    completeItems: List<DownloadComic>
+    completeItems: List<DownloadComic>,
+    progressMessages: Map<Int, String> = emptyMap(),
 ): List<DownloadComicGroup> {
     val activeGroupIds = activeItems.map(::downloadGroupId).toSet()
     val relatedCompleteItems = completeItems.filter { item ->
         downloadGroupId(item) in activeGroupIds
     }
-    return groupDownloads(activeItems + relatedCompleteItems)
+    return groupDownloads(activeItems + relatedCompleteItems, progressMessages)
 }
 
 private fun downloadGroupId(item: DownloadComic): Int {
@@ -239,22 +249,10 @@ private fun downloadGroupId(item: DownloadComic): Int {
 }
 
 private fun resolveGroupCoverPath(items: List<DownloadComic>, displayItem: DownloadComic): String {
-    val directCover = items.firstNotNullOfOrNull { item ->
-        item.coverPath.takeIf { it.isNotBlank() && File(it).exists() }
+    for (item in items) {
+        if (item.coverPath.isNotBlank()) return item.coverPath
     }
-    if (directCover != null) {
-        return directCover
-    }
-    return items.firstNotNullOfOrNull { item ->
-        val path = item.zipPath.takeIf { it.isNotBlank() } ?: return@firstNotNullOfOrNull null
-        val file = File(path)
-        val rootDir = when {
-            file.isDirectory -> file.parentFile
-            file.isFile -> file.parentFile
-            else -> null
-        }
-        rootDir?.let { File(it, "cover.webp") }?.takeIf { it.exists() }?.absolutePath
-    } ?: displayItem.coverPath
+    return displayItem.coverPath
 }
 
 private fun resolveGroupStatus(items: List<DownloadComic>): String {
