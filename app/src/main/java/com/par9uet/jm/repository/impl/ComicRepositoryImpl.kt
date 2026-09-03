@@ -636,24 +636,47 @@ class ComicRepositoryImpl(
     }
 
     override suspend fun downloadImageBytes(comicId: Int, imageIndex: Int): ByteArray? {
+        val imageUrl = embeddedImageUrl(comicId, imageIndex) ?: return null
+        return fetchBytes(imageUrl)
+    }
+
+    private suspend fun embeddedImageUrl(comicId: Int, imageIndex: Int): String? {
         val images = synchronized(imageCache) { imageCache[comicId] }
         val image = images?.getOrNull(imageIndex) ?: return null
-        val imageUrl = fixImageUrl(image.getDownloadUrl())
-        return withContext(Dispatchers.IO) {
-            try {
-                logError("ComicRepositoryImpl", "下载图片 comicId=$comicId index=$imageIndex URL=$imageUrl")
-                val request = buildImageRequest(imageUrl)
-                cleanHttpClient.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        logError("ComicRepositoryImpl", "下载图片失败 comicId=$comicId index=$imageIndex: HTTP ${response.code} URL=$imageUrl")
-                        return@withContext null
-                    }
-                    response.body?.bytes()
+        return fixImageUrl(image.getDownloadUrl())
+    }
+
+    override suspend fun fetchImageBytesForSources(
+        comicId: Int,
+        imageIndex: Int,
+        sources: List<String>,
+    ): ByteArray? {
+        val candidates = buildList {
+            // 1. 内嵌 API 缓存的原始图片 URL（当前数据的首选源）
+            embeddedImageUrl(comicId, imageIndex)?.let(::add)
+            // 2. 显式传入的候选 URL（网络列表、换域名规则等）
+            addAll(sources)
+        }.distinct()
+        for (url in candidates) {
+            val bytes = fetchBytes(url) ?: continue
+            return bytes
+        }
+        return null
+    }
+
+    private suspend fun fetchBytes(url: String): ByteArray? = withContext(Dispatchers.IO) {
+        try {
+            val request = buildImageRequest(url)
+            cleanHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    logError("ComicRepositoryImpl", "下载图片失败: HTTP ${response.code} URL=$url")
+                    return@withContext null
                 }
-            } catch (e: Exception) {
-                logError("ComicRepositoryImpl", "下载图片异常 comicId=$comicId index=$imageIndex: ${e.message} URL=$imageUrl")
-                null
+                response.body?.bytes()
             }
+        } catch (e: Exception) {
+            logError("ComicRepositoryImpl", "下载图片异常: ${e.message} URL=$url")
+            null
         }
     }
 

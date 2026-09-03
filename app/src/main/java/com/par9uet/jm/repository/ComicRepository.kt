@@ -21,6 +21,12 @@ interface ComicRepository {
     suspend fun getHomeSwiperComicList(): NetWorkResult<List<HomeSwiperComicListItemResponse>>
     suspend fun getComicPicList(id: Int, shunt: String): NetWorkResult<ComicPicListResponse>
     suspend fun downloadImageBytes(comicId: Int, imageIndex: Int): ByteArray?
+
+    /**
+     * 依次尝试多个图片 URL（内嵌 API 列表、网络列表、封面域名规则等），
+     * 返回第一个成功下载的图片字节。用于图片源临时不可用时自动换源重试。
+     */
+    suspend fun fetchImageBytesForSources(comicId: Int, imageIndex: Int, sources: List<String>): ByteArray?
     suspend fun getComicList(
         page: Int,
         order: ComicSearchOrderFilter,

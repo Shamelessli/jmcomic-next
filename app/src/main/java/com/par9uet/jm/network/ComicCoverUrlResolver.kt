@@ -1,5 +1,7 @@
 package com.par9uet.jm.network
 
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+
 /**
  * Normalizes the API's `image` field into loadable cover URLs.
  *
@@ -48,6 +50,41 @@ object ComicCoverUrlResolver {
             if (comicId > 0) {
                 imageHosts.forEach { host -> add("$host/media/albums/${comicId}_3x4.jpg") }
             }
+        }.distinct()
+    }
+
+    /**
+     * 将 [source] 当作"path 完整、仅域名可变"的图片 URL，在配置图床 +
+     * 上游图床域名上生成候选地址。用于页面图片在单个域名抽风时自动换源。
+     * 仅当 source 是绝对 URL（或 // 开头的协议相对地址）时才有意义。
+     */
+    fun imageHostCandidates(
+        source: String,
+        configuredImageHost: String,
+    ): List<String> {
+        val trimmed = source.trim()
+        if (trimmed.isBlank()) return emptyList()
+        val hosts = buildList {
+            normalizeHost(configuredImageHost)?.let(::add)
+            upstreamImageDomains.mapNotNull(::normalizeHost).forEach(::add)
+        }.distinct()
+        if (hosts.isEmpty()) return listOf(trimmed)
+
+        val absolute = when {
+            isAbsoluteUrl(trimmed) -> trimmed
+            trimmed.startsWith("//") -> "https:$trimmed"
+            else -> return emptyList()
+        }
+        val parsed = absolute.toHttpUrlOrNull() ?: return listOf(trimmed)
+        val host = parsed.host
+        val pathAndQuery = absolute.substringAfter("//").substringAfter('/')
+
+        return buildList {
+            add(absolute)
+            hosts.filterNot { normalizeHost(it)?.contains(host) == true }
+                .forEach { candidateHost ->
+                    add("${candidateHost.trimEnd('/')}/$pathAndQuery")
+                }
         }.distinct()
     }
 
