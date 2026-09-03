@@ -15,6 +15,7 @@ import com.par9uet.jm.storage.ReadHistoryStorage
 import com.par9uet.jm.storage.SecureStorage
 import com.par9uet.jm.storage.UserStorage
 import com.par9uet.jm.store.AppUpdateDownloadManager
+import com.par9uet.jm.store.DownloadConcurrencyGate
 import com.par9uet.jm.store.DownloadToastAggregator
 import com.par9uet.jm.store.HistorySearchManager
 import com.par9uet.jm.store.InitManager
@@ -68,6 +69,7 @@ val appModule = module {
     single { ReadHistoryManager(get()) } bind AppInitTask::class
     single { ToastManager() }
     single { DownloadToastAggregator(get()) }
+    single { DownloadConcurrencyGate(get()) }
     single { InitManager() }
     single { AppUpdateDownloadManager(get(), get(), get(), get()) }
 

@@ -7,13 +7,21 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
+import com.google.gson.Gson
 import com.par9uet.jm.data.models.Comic
 import com.par9uet.jm.data.models.ComicChapter
 import com.par9uet.jm.database.dao.DownloadComicDao
 import com.par9uet.jm.database.model.DownloadComic
 import com.par9uet.jm.worker.DownloadComicWorker
+import com.par9uet.jm.cache.AdoptionPlan
+import com.par9uet.jm.cache.CacheAdopter
+import com.par9uet.jm.cache.CacheRootIndex
 import com.par9uet.jm.cache.cachePathExists
 import com.par9uet.jm.cache.deleteCachePath
+import com.par9uet.jm.cache.deleteComicRoot
+import com.par9uet.jm.cache.findExistingComicChapterDownloadPath
+import com.par9uet.jm.cache.getComicChapterDownloadPath
+import com.par9uet.jm.cache.getComicDownloadRootPath
 import com.par9uet.jm.cache.listComicImagePaths
 import com.par9uet.jm.cache.CacheIntegrityResult
 import kotlinx.coroutines.CoroutineScope
@@ -29,6 +37,7 @@ class DownloadManager(
     private val downloadComicDao: DownloadComicDao,
     private val scope: CoroutineScope,
     private val toastManager: ToastManager,
+    private val gson: Gson,
 ) {
     fun downloadComic(comic: Comic) {
         scope.launch(Dispatchers.IO) {
@@ -36,9 +45,17 @@ class DownloadManager(
                 toastManager.showAsync("该漫画已在缓存列表中")
                 return@launch
             }
-            insertComicTask(comic)
-            toastManager.showAsync("创建缓存任务成功")
-            enqueueDownload(comic.id)
+            val bookName = comic.name
+            val groupId = comic.id
+            val expectedIds = comic.comicChapterList.map { it.id }.ifEmpty { listOf(comic.id) }.toSet()
+            val plan = adoptExisting(bookName, groupId, expectedIds)
+            if (plan != null) {
+                applyAdoption(comic, comic.comicChapterList.map { it.id }.ifEmpty { listOf(comic.id) }, plan)
+            } else {
+                insertComicTask(comic)
+                enqueueDownload(comic.id)
+                toastManager.showAsync("创建缓存任务成功")
+            }
         }
     }
 
@@ -76,26 +93,16 @@ class DownloadManager(
                 return@launch
             }
 
-            val now = System.currentTimeMillis()
-            newChapters.forEachIndexed { index, chapter ->
-                downloadComicDao.insert(
-                    DownloadComic(
-                        id = chapter.id,
-                        name = "${parentComic.name} ${chapter.name}".trim(),
-                        authorList = parentComic.authorList,
-                        tagList = parentComic.tagList,
-                        coverPath = "",
-                        zipPath = "",
-                        progress = 0f,
-                        status = "pending",
-                        createTime = now + index,
-                        groupId = parentComic.id,
-                        groupName = parentComic.name,
-                        chapterName = chapter.name
-                    )
-                )
+            val bookName = parentComic.name
+            val groupId = parentComic.id
+            val expectedIds = newChapters.map { it.id }.toSet()
+            val plan = adoptExisting(bookName, groupId, expectedIds)
+            if (plan != null) {
+                applyAdoption(parentComic, newChapters.map { it.id }, plan)
+            } else {
+                insertChapters(parentComic, newChapters)
+                enqueueDownloads(newChapters.map { it.id })
             }
-            enqueueDownloads(newChapters.map { it.id })
 
             val skippedCount = chapters.size - newChapters.size
             toastManager.showAsync(
@@ -124,6 +131,125 @@ class DownloadManager(
                 groupName = comic.name
             )
         )
+    }
+
+    private suspend fun insertChapters(parentComic: Comic, chapters: List<ComicChapter>) {
+        val now = System.currentTimeMillis()
+        chapters.forEachIndexed { index, chapter ->
+            downloadComicDao.insert(
+                DownloadComic(
+                    id = chapter.id,
+                    name = "${parentComic.name} ${chapter.name}".trim(),
+                    authorList = parentComic.authorList,
+                    tagList = parentComic.tagList,
+                    coverPath = "",
+                    zipPath = "",
+                    progress = 0f,
+                    status = "pending",
+                    createTime = now + index,
+                    groupId = parentComic.id,
+                    groupName = parentComic.name,
+                    chapterName = chapter.name,
+                )
+            )
+        }
+    }
+
+    /** 下载前检测磁盘已有缓存（含 漫画/漫画1/漫画2 重复目录群）；无则返回 null 走全新下载。 */
+    private fun adoptExisting(bookName: String, groupId: Int, expectedChapterIds: Set<Int>): AdoptionPlan? =
+        runCatching { CacheAdopter(context, gson).adopt(bookName, groupId, expectedChapterIds) }
+            .getOrNull()
+
+    /**
+     * 应用接管计划：已完整章节直接登记为已缓存（不重复下载）；缺页章节只补缺失页；
+     * 清单未覆盖的章节走全新下载。根目录已在 [CacheAdopter.adopt] 内登记，章节路径随之收敛。
+     */
+    private suspend fun applyAdoption(comic: Comic, chapterIds: List<Int>, plan: AdoptionPlan) {
+        val now = System.currentTimeMillis()
+        val ownerChapterId = chapterIds.minByOrNull { it } ?: chapterIds.first()
+        val chapterNameById = comic.comicChapterList.associate { it.id to it.name }
+
+        val rows = chapterIds.mapIndexed { index, chapterId ->
+            val chapterName = chapterNameById[chapterId].orEmpty()
+            DownloadComic(
+                id = chapterId,
+                name = if (chapterName.isBlank()) comic.name else "${comic.name} $chapterName".trim(),
+                authorList = comic.authorList,
+                tagList = comic.tagList,
+                coverPath = "",
+                zipPath = "",
+                progress = 0f,
+                status = "pending",
+                createTime = now + index,
+                groupId = comic.id,
+                groupName = comic.name,
+                chapterName = chapterName,
+            )
+        }
+
+        val repairIds = mutableListOf<Int>()
+        val freshIds = mutableListOf<Int>()
+        for (row in rows) {
+            when {
+                row.id in plan.completeChapterIds -> {
+                    // 确认章节目录真实存在（兼容旧命名）；找不到则降级为全新下载，避免把空目录标记为已缓存
+                    val verifiedDir = runCatching {
+                        findExistingComicChapterDownloadPath(context, row)
+                    }.getOrNull()
+                    if (verifiedDir != null) {
+                        downloadComicDao.insert(
+                            row.copy(
+                                status = "complete",
+                                progress = 1f,
+                                zipPath = verifiedDir,
+                                coverPath = if (row.id == ownerChapterId) plan.coverPath else "",
+                            )
+                        )
+                    } else {
+                        downloadComicDao.insert(row)
+                        freshIds += row.id
+                    }
+                }
+                row.id in plan.repairChapters -> {
+                    downloadComicDao.insert(row)
+                    repairIds += row.id
+                }
+                else -> {
+                    downloadComicDao.insert(row)
+                    freshIds += row.id
+                }
+            }
+        }
+
+        val needCover = plan.coverPath.isBlank()
+        val repairRequests = plan.repairChapters.map { (chapterId, missingPages) ->
+            DownloadRepairRequest(
+                comicId = chapterId,
+                downloadCover = needCover && chapterId == ownerChapterId && freshIds.isEmpty(),
+                downloadPages = true,
+                writeConfig = true,
+                missingPageIndices = missingPages.map { it - 1 }.filter { it >= 0 }.toIntArray(),
+            )
+        }
+        if (freshIds.isNotEmpty()) {
+            // fresh 章节全新下载时一并补下封面（downloadCover=true），repair 章节不再重复下封面
+            enqueueDownloads(freshIds, downloadCover = needCover)
+            if (repairIds.isNotEmpty()) enqueueRepairRequests(repairRequests)
+        } else {
+            if (repairIds.isNotEmpty()) {
+                enqueueRepairRequests(repairRequests)
+            } else if (needCover) {
+                // 全部完整但缺封面：仅由 owner 章节补下封面
+                enqueueRepairRequests(listOf(DownloadRepairRequest(ownerChapterId, true, false, true)))
+            }
+        }
+
+        val summary = buildList {
+            if (plan.completeChapterIds.isNotEmpty()) add("${plan.completeChapterIds.size} 章已缓存")
+            if (repairIds.isNotEmpty()) add("${repairIds.size} 章补页")
+            if (freshIds.isNotEmpty()) add("${freshIds.size} 章重新下载")
+        }
+        toastManager.showAsync("检测到已有缓存：${summary.joinToString("，")}")
     }
 
     private fun enqueueDownload(comicId: Int) {
@@ -240,6 +366,10 @@ class DownloadManager(
                 groupCoverPaths.forEach { path ->
                     if (cachePathExists(context, path)) deleteCachePath(context, path)
                 }
+                // 整组删除后清理漫画根目录与其中的 config.json，避免残留半空目录
+                // 成为下一次下载时 SAF 重名改名（漫画/漫画1/漫画2）的碰撞源
+                val rootProbe = groupItems.first()
+                runCatching { deleteComicRoot(context, getComicDownloadRootPath(context, rootProbe)) }
             }
         }
         return deletedCount

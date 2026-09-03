@@ -116,6 +116,8 @@ data class LocalSetting(
     val readMemoryOptEnabled: Boolean = false,
     // 阅读并发解码上限：仅在 readMemoryOptEnabled 开启时生效，推荐值 2
     val readDecodeConcurrency: Int = 2,
+    // 最大同时下载章节数：限制同时真正执行下载的 worker 数，推荐值 2，上限受 WorkManager 进程内 4 约束
+    val downloadConcurrency: Int = 2,
     // 缓存完整性检查：off | partial（配置与封面）| full（配置、封面与全部图片页）
     val cacheIntegrityCheckMode: String = CACHE_INTEGRITY_CHECK_OFF,
     // 首页推荐排除标签：带有这些标签的漫画不会出现在首页推荐中

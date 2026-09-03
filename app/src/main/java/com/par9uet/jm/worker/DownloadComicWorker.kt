@@ -26,8 +26,9 @@ import com.par9uet.jm.database.model.UpdateComicZipPath
 import com.par9uet.jm.repository.ComicRepository
 import com.par9uet.jm.retrofit.model.ComicPicListResponse
 import com.par9uet.jm.retrofit.model.NetWorkResult
-import com.par9uet.jm.store.DownloadToastAggregator
+import com.par9uet.jm.store.DownloadConcurrencyGate
 import com.par9uet.jm.store.DownloadProgressMessageStore
+import com.par9uet.jm.store.DownloadToastAggregator
 import com.par9uet.jm.store.LocalSettingManager
 import com.par9uet.jm.store.RemoteSettingManager
 import com.par9uet.jm.utils.COMIC_CACHE_NOTIFICATION_ID_BASE
@@ -55,6 +56,7 @@ class DownloadComicWorker(
     private val comicRepository: ComicRepository,
     private val downloadToastAggregator: DownloadToastAggregator,
     private val imageLoader: ImageLoader,
+    private val downloadConcurrencyGate: DownloadConcurrencyGate,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
@@ -76,72 +78,76 @@ class DownloadComicWorker(
             it.groupId.takeIf { g -> g != 0 } ?: comicId
         } ?: comicId
 
-        return try {
-            val downloadTask = downloadComicDao.getById(comicId) ?: return Result.failure()
-            downloadComicDao.updateStatus(UpdateComicStatus(comicId, "downloading"))
-            updateProgressMessage(downloadTask, "准备缓存")
-            DownloadSpeedTracker.startTracking(coverOwnerId)
-            showComicCacheNotification(
-                downloadTask,
-                resolveGroupProgress(downloadTask, downloadTask.progress)
-            )
-
-            if (downloadCover) {
-                updateProgressMessage(downloadTask, "下载封面")
-                val coverPath = downloadCover(downloadTask, coverOwnerId)
-                if (coverPath.isNotBlank()) {
-                    downloadComicDao.updateCover(UpdateComicCover(comicId, coverPath))
-                }
-            }
-
-            if (downloadPages) {
-                downloadPicList(
+        // 通过进程级门控把"真正并行下载的章节数"限制到用户设置值；
+        // 获取/释放对正常、失败、取消三种路径都成立。
+        return downloadConcurrencyGate.withPermit {
+            try {
+                val downloadTask = downloadComicDao.getById(comicId) ?: return@withPermit Result.failure()
+                downloadComicDao.updateStatus(UpdateComicStatus(comicId, "downloading"))
+                updateProgressMessage(downloadTask, "准备缓存")
+                DownloadSpeedTracker.startTracking(coverOwnerId)
+                showComicCacheNotification(
                     downloadTask,
-                    localSettingManager.localSettingState.value.shunt,
-                    missingPageIndices,
+                    resolveGroupProgress(downloadTask, downloadTask.progress)
                 )
-            }
-            updateProgressMessage(downloadTask, "整理缓存文件")
-            showComicCacheNotification(downloadTask, updateChapterProgress(downloadTask, 1f))
 
-            val chapterDirPath = getComicChapterDownloadPath(appContext, downloadTask)
-            downloadComicDao.updateZipPath(UpdateComicZipPath(comicId, chapterDirPath))
-            downloadComicDao.updateStatus(UpdateComicStatus(comicId, "complete"))
-            if (writeConfig) {
-                updateProgressMessage(downloadTask, "生成 JSON")
-                writeCacheConfig(comicId)
-            }
-            DownloadSpeedTracker.stopTracking(coverOwnerId)
-            DownloadProgressMessageStore.clear(coverOwnerId)
-            cancelComicCacheNotificationIfIdle(downloadTask)
-            downloadToastAggregator.report(batchId, batchTotal, comicId, success = true)
-            Result.success()
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            // worker 被系统取消时应立即终止，不能按失败进入退避重试
-            throw e
-        } catch (e: Exception) {
-            updateProgressMessage(
-                downloadTask = downloadComicDao.getById(comicId),
-                message = if (runAttemptCount < DOWNLOAD_MAX_ATTEMPTS - 1) {
-                    "下载失败，准备重试"
-                } else {
-                    "下载失败，可点击重试"
-                },
-            )
-            logError(
-                "DownloadComicWorker",
-                "章节 $comicId 下载失败（第 ${runAttemptCount + 1} 次）：${e.message ?: e::class.java.simpleName}"
-            )
-            if (runAttemptCount < DOWNLOAD_MAX_ATTEMPTS - 1) {
-                Result.retry()
-            } else {
-                downloadComicDao.updateStatus(UpdateComicStatus(comicId, "error"))
-                DownloadSpeedTracker.stopTracking(coverOwnerId)
-                downloadComicDao.getById(comicId)?.let {
-                    cancelComicCacheNotificationIfIdle(it)
+                if (downloadCover) {
+                    updateProgressMessage(downloadTask, "下载封面")
+                    val coverPath = downloadCover(downloadTask, coverOwnerId)
+                    if (coverPath.isNotBlank()) {
+                        downloadComicDao.updateCover(UpdateComicCover(comicId, coverPath))
+                    }
                 }
-                downloadToastAggregator.report(batchId, batchTotal, comicId, success = false)
-                Result.failure()
+
+                if (downloadPages) {
+                    downloadPicList(
+                        downloadTask,
+                        localSettingManager.localSettingState.value.shunt,
+                        missingPageIndices,
+                    )
+                }
+                updateProgressMessage(downloadTask, "整理缓存文件")
+                showComicCacheNotification(downloadTask, updateChapterProgress(downloadTask, 1f))
+
+                val chapterDirPath = getComicChapterDownloadPath(appContext, downloadTask)
+                downloadComicDao.updateZipPath(UpdateComicZipPath(comicId, chapterDirPath))
+                downloadComicDao.updateStatus(UpdateComicStatus(comicId, "complete"))
+                if (writeConfig) {
+                    updateProgressMessage(downloadTask, "生成 JSON")
+                    writeCacheConfig(comicId)
+                }
+                DownloadSpeedTracker.stopTracking(coverOwnerId)
+                DownloadProgressMessageStore.clear(coverOwnerId)
+                cancelComicCacheNotificationIfIdle(downloadTask)
+                downloadToastAggregator.report(batchId, batchTotal, comicId, success = true)
+                Result.success()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // worker 被系统取消时应立即终止，不能按失败进入退避重试
+                throw e
+            } catch (e: Exception) {
+                updateProgressMessage(
+                    downloadTask = downloadComicDao.getById(comicId),
+                    message = if (runAttemptCount < DOWNLOAD_MAX_ATTEMPTS - 1) {
+                        "下载失败，准备重试"
+                    } else {
+                        "下载失败，可点击重试"
+                    },
+                )
+                logError(
+                    "DownloadComicWorker",
+                    "章节 $comicId 下载失败（第 ${runAttemptCount + 1} 次）：${e.message ?: e::class.java.simpleName}"
+                )
+                if (runAttemptCount < DOWNLOAD_MAX_ATTEMPTS - 1) {
+                    Result.retry()
+                } else {
+                    downloadComicDao.updateStatus(UpdateComicStatus(comicId, "error"))
+                    DownloadSpeedTracker.stopTracking(coverOwnerId)
+                    downloadComicDao.getById(comicId)?.let {
+                        cancelComicCacheNotificationIfIdle(it)
+                    }
+                    downloadToastAggregator.report(batchId, batchTotal, comicId, success = false)
+                    Result.failure()
+                }
             }
         }
     }

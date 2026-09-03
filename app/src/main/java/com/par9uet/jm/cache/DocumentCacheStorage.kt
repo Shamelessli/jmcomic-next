@@ -21,17 +21,42 @@ fun getTreeUriForCachePath(path: String): Uri? = runCatching {
 
 fun getComicDownloadRootPath(context: Context, comic: DownloadComic): String {
     val treeUri = getDownloadTreeUri(context)
-    if (treeUri == null) return getComicDownloadRootDir(context, comic).absolutePath
+    val groupId = CacheRootIndex.groupIdFor(comic.id, comic.groupId)
+    // 优先使用已登记的根目录：SAF 在 createDocument 重名时会改名（漫画 → 漫画1），
+    // 目录名又不入库，导致同一本书散落到多个兄弟根。命中登记值后封面/章节/config
+    // 都收敛到同一个根，从源头止住重复目录。
+    CacheRootIndex.get(context, groupId)?.let { registered ->
+        if (isRootStillValid(context, registered, treeUri)) return registered
+    }
+    if (treeUri == null) {
+        val localRoot = getComicDownloadRootDir(context, comic).absolutePath
+        CacheRootIndex.put(context, groupId, localRoot)
+        return localRoot
+    }
     val root = DocumentsContract.buildDocumentUriUsingTree(
         treeUri,
         DocumentsContract.getTreeDocumentId(treeUri),
     )
-    return requireNotNull(findOrCreateCacheDocument(
+    val resolved = requireNotNull(findOrCreateCacheDocument(
         context,
         root,
         safeCacheFileName(comic.groupName.ifBlank { comic.name }),
         DocumentsContract.Document.MIME_TYPE_DIR,
     )).toString()
+    CacheRootIndex.put(context, groupId, resolved)
+    return resolved
+}
+
+/**
+ * 登记的根目录是否仍可用：必须真实存在，且与当前活动存储树一致
+ * （本地模式要求登记的是本地路径，SAF 模式要求同树）。否则视为失效并重新解析。
+ */
+private fun isRootStillValid(context: Context, rootPath: String, activeTree: Uri?): Boolean {
+    if (!cachePathExists(context, rootPath)) return false
+    if (activeTree == null) return !isDocumentCachePath(rootPath)
+    val pathTree = getTreeUriForCachePath(rootPath) ?: return false
+    return pathTree.authority == activeTree.authority &&
+        DocumentsContract.getTreeDocumentId(pathTree) == DocumentsContract.getTreeDocumentId(activeTree)
 }
 
 fun getComicChapterDownloadPath(context: Context, comic: DownloadComic): String {
@@ -247,11 +272,56 @@ fun deleteCachePath(context: Context, path: String): Boolean = if (isDocumentCac
     File(path).let { if (it.isDirectory) it.deleteRecursively() else it.delete() }
 }
 
+/**
+ * 删除漫画根目录（含 config.json、cover 与任何残留章节目录）。
+ * 取消缓存后若不清理根目录，它会成为下一次下载时 SAF 重名改名的碰撞源
+ * （产生 漫画/漫画1/漫画2 这类重复目录），因此整组删除时应一并移除。
+ */
+fun deleteComicRoot(context: Context, rootPath: String): Boolean {
+    if (rootPath.isBlank()) return false
+    if (!isDocumentCachePath(rootPath)) {
+        val dir = File(rootPath)
+        if (!dir.exists()) return true
+        return dir.deleteRecursively()
+    }
+    return runCatching { deleteDocumentTree(context, Uri.parse(rootPath)) }.getOrDefault(false)
+}
+
+private fun deleteDocumentTree(context: Context, uri: Uri): Boolean {
+    val resolver = context.contentResolver
+    val children = DocumentsContract.buildChildDocumentsUriUsingTree(uri, DocumentsContract.getDocumentId(uri))
+    // 先收集再删除，避免游标在删除过程中失效
+    val childUris = mutableListOf<Uri>()
+    resolver.query(
+        children,
+        arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+        ),
+        null, null, null,
+    )?.use { cursor ->
+        while (cursor.moveToNext()) {
+            val mime = cursor.getString(1)
+            childUris += DocumentsContract.buildDocumentUriUsingTree(uri, cursor.getString(0)).also {
+                if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
+                    deleteDocumentTree(context, it)
+                }
+            }
+        }
+    }
+    childUris.forEach { runCatching { DocumentsContract.deleteDocument(resolver, it) } }
+    return DocumentsContract.deleteDocument(resolver, uri)
+}
+
 fun findOrCreateCacheDocument(context: Context, parent: Uri, name: String, mimeType: String): Uri? {
     val children = DocumentsContract.buildChildDocumentsUriUsingTree(parent, DocumentsContract.getDocumentId(parent))
     context.contentResolver.query(
         children,
-        arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+        arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+        ),
         null, null, null,
     )?.use { cursor ->
         while (cursor.moveToNext()) {
@@ -260,7 +330,59 @@ fun findOrCreateCacheDocument(context: Context, parent: Uri, name: String, mimeT
             }
         }
     }
-    return DocumentsContract.createDocument(context.contentResolver, parent, mimeType, name)
+    val created = DocumentsContract.createDocument(context.contentResolver, parent, mimeType, name) ?: return null
+    // SAF 提供方在重名时会把新目录改名为 "name1"。若创建结果的名字与期望不符，说明同名
+    // 目录已残留（通常是取消缓存后留下的半空目录），此时接管那个持有数据的兄弟目录，
+    // 而不是静默接受改名、让后续封面/章节/config 散落到新目录里。
+    if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR && displayNameOf(context, created) != name) {
+        takeOverRenamedSibling(context, parent, name)?.let { return it }
+    }
+    return created
+}
+
+private fun displayNameOf(context: Context, uri: Uri): String? = runCatching {
+    context.contentResolver.query(
+        uri,
+        arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+        null, null, null,
+    )?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+}.getOrNull()
+
+/**
+ * 在 [parent] 下查找被系统改名成 "name+数字" 的目录变体，接管其中数据最完整的一个。
+ * 数字后缀越小代表越早创建；多个都完整时接管最早的那个。
+ */
+private fun takeOverRenamedSibling(context: Context, parent: Uri, name: String): Uri? {
+    val children = DocumentsContract.buildChildDocumentsUriUsingTree(parent, DocumentsContract.getDocumentId(parent))
+    val candidates = mutableListOf<Uri>()
+    context.contentResolver.query(
+        children,
+        arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+        ),
+        null, null, null,
+    )?.use { cursor ->
+        while (cursor.moveToNext()) {
+            val displayName = cursor.getString(1)
+            if (cursor.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR && isRenamedVariant(name, displayName)) {
+                candidates += DocumentsContract.buildDocumentUriUsingTree(parent, cursor.getString(0))
+            }
+        }
+    }
+    if (candidates.isEmpty()) return null
+    return candidates
+        .sortedBy { displayNameOf(context, it).orEmpty().removePrefix(name).toIntOrNull() ?: Int.MAX_VALUE }
+        .firstOrNull { listComicImageEntries(context, it.toString()).isNotEmpty() }
+        ?: candidates.firstOrNull()
+}
+
+private fun isRenamedVariant(base: String, displayName: String): Boolean {
+    if (displayName == base) return true
+    if (!displayName.startsWith(base)) return false
+    val suffix = displayName.substring(base.length)
+    return suffix.isNotEmpty() && suffix.all(Char::isDigit)
 }
 
 private fun documentPathSize(context: Context, uri: Uri): Long {

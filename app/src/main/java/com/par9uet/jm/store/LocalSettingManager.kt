@@ -241,6 +241,9 @@ class LocalSettingManager(
     fun updateReadDecodeConcurrency(concurrency: Int) =
         updateSetting { it.copy(readDecodeConcurrency = concurrency.coerceIn(1, 4)) }
 
+    fun updateDownloadConcurrency(concurrency: Int) =
+        updateSetting { it.copy(downloadConcurrency = concurrency.coerceIn(1, 4)) }
+
     fun updateCacheIntegrityCheckMode(mode: String) =
         updateSetting {
             it.copy(

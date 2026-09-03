@@ -122,6 +122,7 @@ private sealed class SettingType {
     object RecommendSource : SettingType()
     object AllGridColumns : SettingType()
     object ReadDecodeConcurrency : SettingType()
+    object DownloadConcurrency : SettingType()
     object CacheIntegrityCheck : SettingType()
 }
 
@@ -381,6 +382,13 @@ fun LocalSettingScreen(
                     ) {
                         if (migrationActive) hiddenMigrationWorkId = null else showCachePathDialog = true
                     }
+                    SettingsRow(
+                        icon = Icons.Rounded.Download,
+                        title = "下载并发数",
+                        value = "同时 ${localSetting.downloadConcurrency}"
+                    ) {
+                        openSetting(SettingType.DownloadConcurrency)
+                    }
                     SettingsRow(Icons.Rounded.CleaningServices, "缓存清理", "清理图片、漫画等缓存文件") {
                         mainNavController.navigate("cacheCleanup")
                     }
@@ -592,6 +600,16 @@ private fun SettingSelectDialogContent(
             )
         }
     }
+    val downloadConcurrencyOptionList by remember {
+        derivedStateOf {
+            listOf(
+                SelectOption("1", "1"),
+                SelectOption("2\uff08\u63a8\u8350\uff09", "2"),
+                SelectOption("3", "3"),
+                SelectOption("4", "4")
+            )
+        }
+    }
     val cacheIntegrityCheckOptionList by remember {
         derivedStateOf {
             listOf(
@@ -616,6 +634,7 @@ private fun SettingSelectDialogContent(
             is SettingType.NotificationManagement -> notificationOptionList
             is SettingType.RecommendSource -> recommendSourceOptionList
             is SettingType.ReadDecodeConcurrency -> readDecodeConcurrencyOptionList
+            is SettingType.DownloadConcurrency -> downloadConcurrencyOptionList
             is SettingType.CacheIntegrityCheck -> cacheIntegrityCheckOptionList
         },
         onSelect = {
@@ -644,6 +663,7 @@ private fun SettingSelectDialogContent(
                 }
                 is SettingType.RecommendSource -> localSettingManager.updateRecommendSource(it)
                 is SettingType.ReadDecodeConcurrency -> localSettingManager.updateReadDecodeConcurrency(it.toIntOrNull() ?: 2)
+                is SettingType.DownloadConcurrency -> localSettingManager.updateDownloadConcurrency(it.toIntOrNull() ?: 2)
                 is SettingType.CacheIntegrityCheck -> localSettingManager.updateCacheIntegrityCheckMode(it)
             }
             if (shouldDismiss) onDismiss()
@@ -1000,6 +1020,7 @@ private fun settingTitle(type: SettingType): String {
         is SettingType.RecommendSource -> "\u63a8\u8350\u6e90"
         is SettingType.AllGridColumns -> "\u7f51\u683c\u5217\u6570"
         is SettingType.ReadDecodeConcurrency -> "\u5e76\u53d1\u89e3\u7801\u6570"
+        is SettingType.DownloadConcurrency -> "下载并发数"
         is SettingType.CacheIntegrityCheck -> "缓存检查"
     }
 }
@@ -1022,6 +1043,7 @@ private fun settingValue(type: SettingType, localSetting: LocalSetting): String 
         is SettingType.RecommendSource -> localSetting.recommendSource
         is SettingType.AllGridColumns -> ""
         is SettingType.ReadDecodeConcurrency -> "${localSetting.readDecodeConcurrency}"
+        is SettingType.DownloadConcurrency -> "${localSetting.downloadConcurrency}"
         is SettingType.CacheIntegrityCheck -> localSetting.cacheIntegrityCheckMode
     }
 }

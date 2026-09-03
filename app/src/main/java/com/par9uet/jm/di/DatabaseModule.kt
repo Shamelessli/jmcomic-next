@@ -27,11 +27,11 @@ val databaseModule = module {
             .build()
     }
     single { get<AppDatabase>().downloadComicDao() }
-    single { DownloadManager(get(), get(), get(), get()) }
+    single { DownloadManager(get(), get(), get(), get(), get()) }
     viewModel { DownloadViewModel(get(), get()) }
     viewModel { DownloadComicDetailViewModel(get()) }
 
-    worker { DownloadComicWorker(get(), get(), get(), get(), get(), get(), get(), get()) }
+    worker { DownloadComicWorker(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     worker { CacheMigrationWorker(get(), get(), get(), get()) }
 }
 

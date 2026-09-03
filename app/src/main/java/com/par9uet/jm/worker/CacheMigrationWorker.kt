@@ -126,6 +126,8 @@ class CacheMigrationWorker(
             }
             setDownloadTreeUri(appContext, targetTreeUri)
             localSettingManager.updateDownloadTreeUri(targetTreeUri)
+            // 存储树切换后，按漫画组登记的旧根目录路径全部失效，清空索引让后续在新树下重建
+            com.par9uet.jm.cache.CacheRootIndex.clearAll(appContext)
             migrated.groupBy { it.groupId.takeIf { id -> id != 0 } ?: it.id }.values.forEach { chapters ->
                 DownloadProgressMessageStore.update(
                     chapters.first().groupId.takeIf { it != 0 } ?: chapters.first().id,

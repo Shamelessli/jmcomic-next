@@ -152,6 +152,29 @@ fun checkComicCacheIntegrity(
 }
 
 /**
+ * 评估单个章节磁盘图片相对 config 清单的完整性，返回 (是否完整, 缺失页号 1-based)。
+ * 判据与 [checkComicCacheIntegrity] 的 FULL 模式保持一致：以页号集合是否连续 0..n-1 为准，
+ * 忽略文件扩展名变化与 SAF 游标顺序。供缓存接管流程复用，避免判据分叉。
+ */
+internal fun assessChapterPages(
+    context: Context,
+    chapter: DownloadComicCacheChapter,
+): Pair<Boolean, List<Int>> {
+    val images = listComicImageEntries(context, chapter.path)
+    val actualNames = images.map(CacheImageEntry::name)
+    val actualPages = actualNames.mapNotNull { it.substringBeforeLast('.').toIntOrNull() }
+    val expected = chapter.imageCount.takeIf { it > 0 }
+        ?: chapter.imageFiles.size.takeIf { it > 0 }
+        ?: images.maxOfOrNull { it.name.substringBeforeLast('.').toIntOrNull() ?: -1 }
+            ?.plus(1)
+        ?: 0
+    if (expected <= 0) return false to emptyList()
+    val missingPages = ((0 until expected).toSet() - actualPages.toSet()).sorted().map { it + 1 }
+    val duplicateOrGappy = actualPages.size != actualNames.size
+    return (missingPages.isEmpty() && !duplicateOrGappy) to missingPages
+}
+
+/**
  * Resolve chapter pages against the active storage tree. A DAO row can still
  * contain the old default path after a migration, so using zipPath blindly
  * makes a healthy custom cache look incomplete (and makes readers open the
