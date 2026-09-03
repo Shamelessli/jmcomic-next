@@ -4,6 +4,7 @@ import androidx.room.Room
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.par9uet.jm.database.AppDatabase
+import com.par9uet.jm.store.CacheScanManager
 import com.par9uet.jm.store.DownloadManager
 import com.par9uet.jm.ui.viewModel.DownloadComicDetailViewModel
 import com.par9uet.jm.ui.viewModel.DownloadViewModel
@@ -28,6 +29,7 @@ val databaseModule = module {
     }
     single { get<AppDatabase>().downloadComicDao() }
     single { DownloadManager(get(), get(), get(), get(), get()) }
+    single { CacheScanManager(get(), get(), get(), get(), get()) }
     viewModel { DownloadViewModel(get(), get()) }
     viewModel { DownloadComicDetailViewModel(get()) }
 

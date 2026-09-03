@@ -78,6 +78,7 @@ fun AppScreen(
             composable(route = "checkUpdate") { CheckUpdateScreen() }
             composable(route = "logViewer") { LogViewerScreen() }
             composable(route = "cacheCleanup") { CacheCleanupScreen() }
+            composable(route = "scanCache") { ScanCacheScreen() }
             composable(route = "backupRestore") { BackupRestoreScreen() }
             composable(route = "personaManager") { PersonaManagerScreen() }
             composable(

@@ -1,12 +1,16 @@
 package com.par9uet.jm.cache
 
 import android.content.Context
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.provider.DocumentsContract
 import com.google.gson.Gson
 import com.par9uet.jm.database.model.DownloadComic
+import com.par9uet.jm.utils.log
+import com.par9uet.jm.utils.logError
 import java.io.File
 import java.io.OutputStream
+import java.util.Collections
 
 fun isDocumentCachePath(path: String): Boolean = path.startsWith("content://")
 
@@ -26,7 +30,10 @@ fun getComicDownloadRootPath(context: Context, comic: DownloadComic): String {
     // 目录名又不入库，导致同一本书散落到多个兄弟根。命中登记值后封面/章节/config
     // 都收敛到同一个根，从源头止住重复目录。
     CacheRootIndex.get(context, groupId)?.let { registered ->
-        if (isRootStillValid(context, registered, treeUri)) return registered
+        if (isRootStillValid(context, registered, treeUri)) {
+            ensureNoMedia(context, registered)
+            return registered
+        }
     }
     if (treeUri == null) {
         val localRoot = getComicDownloadRootDir(context, comic).absolutePath
@@ -44,6 +51,8 @@ fun getComicDownloadRootPath(context: Context, comic: DownloadComic): String {
         DocumentsContract.Document.MIME_TYPE_DIR,
     )).toString()
     CacheRootIndex.put(context, groupId, resolved)
+    // 在写入任何图片之前放好 .nomedia，确保共享存储上的缓存图片不进相册/图片选择器
+    ensureNoMedia(context, resolved)
     return resolved
 }
 
@@ -57,6 +66,73 @@ private fun isRootStillValid(context: Context, rootPath: String, activeTree: Uri
     val pathTree = getTreeUriForCachePath(rootPath) ?: return false
     return pathTree.authority == activeTree.authority &&
         DocumentsContract.getTreeDocumentId(pathTree) == DocumentsContract.getTreeDocumentId(activeTree)
+}
+
+private const val NO_MEDIA_FILE_NAME = ".nomedia"
+private const val NO_MEDIA_MIME_TYPE = "application/octet-stream"
+private const val EXTERNAL_STORAGE_AUTHORITY = "com.android.externalstorage.documents"
+private const val PRIMARY_VOLUME = "primary"
+
+/** 已确保含 .nomedia 的根目录（进程内去重，避免每次路径定位都多一次 SAF 查询）。 */
+private val noMediaEnsuredRoots = Collections.synchronizedSet(HashSet<String>())
+
+/**
+ * 确保共享存储上的漫画根目录含有 .nomedia，防止缓存图片被媒体扫描索引进相册
+ * 与各类图片选择界面。应用内部存储（默认缓存路径）不被媒体扫描，直接跳过。
+ *
+ * 必须在写入图片之前调用才能阻止索引；对 .nomedia 之前已入库的旧图片，
+ * 创建后尽力触发一次媒体重扫让系统隐藏它们（个别设备需等系统周期扫描或重启）。
+ */
+fun ensureNoMedia(context: Context, rootPath: String) {
+    if (!isDocumentCachePath(rootPath)) return
+    if (!noMediaEnsuredRoots.add(rootPath)) return
+    if (findCacheChildPath(context, rootPath, NO_MEDIA_FILE_NAME) != null) return
+    val created = runCatching {
+        DocumentsContract.createDocument(
+            context.contentResolver,
+            Uri.parse(rootPath),
+            NO_MEDIA_MIME_TYPE,
+            NO_MEDIA_FILE_NAME,
+        )
+    }.getOrNull()
+    val nameIntact = created != null && displayNameOf(context, created) == NO_MEDIA_FILE_NAME
+    if (!nameIntact) {
+        // 个别 SAF 提供方会改写点文件名（如追加扩展名）或直接拒绝创建：
+        // 清掉废文件并记录，本次进程不再重试，等待系统周期扫描兜底
+        created?.let { runCatching { deleteCachePath(context, it.toString()) } }
+        logError("NoMedia", "创建 .nomedia 失败：$rootPath")
+        return
+    }
+    log("NoMedia", "已写入 .nomedia：$rootPath")
+    triggerNoMediaScan(context, rootPath)
+}
+
+/**
+ * 扫描 .nomedia 文件本身促使媒体服务重新评估其所在目录，把 .nomedia 出现前
+ * 已入库的缓存图片从相册隐藏。仅外部存储提供方（可还原真实路径）时可行。
+ */
+private fun triggerNoMediaScan(context: Context, rootPath: String) {
+    val dirPath = documentUriToFilePath(Uri.parse(rootPath)) ?: return
+    runCatching {
+        MediaScannerConnection.scanFile(
+            context,
+            arrayOf("$dirPath/$NO_MEDIA_FILE_NAME"),
+            null,
+            null,
+        )
+    }.onFailure { logError("NoMedia", "触发媒体扫描失败：${it.message}") }
+}
+
+/** 把外部存储 SAF 文档 URI 还原为真实文件路径；非外部存储提供方返回 null。 */
+private fun documentUriToFilePath(uri: Uri): String? {
+    if (uri.authority != EXTERNAL_STORAGE_AUTHORITY) return null
+    val documentId = runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull() ?: return null
+    val separator = documentId.indexOf(':')
+    if (separator <= 0 || separator == documentId.lastIndex) return null
+    val volume = documentId.substring(0, separator)
+    val relative = documentId.substring(separator + 1)
+    val volumeRoot = if (volume == PRIMARY_VOLUME) "/storage/emulated/0" else "/storage/$volume"
+    return "$volumeRoot/$relative"
 }
 
 fun getComicChapterDownloadPath(context: Context, comic: DownloadComic): String {

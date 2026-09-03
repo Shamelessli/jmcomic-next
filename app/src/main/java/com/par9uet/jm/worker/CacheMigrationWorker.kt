@@ -18,6 +18,7 @@ import com.par9uet.jm.cache.cachePathExists
 import com.par9uet.jm.cache.cachePathLength
 import com.par9uet.jm.cache.cachePathSize
 import com.par9uet.jm.cache.deleteCachePath
+import com.par9uet.jm.cache.ensureNoMedia
 import com.par9uet.jm.cache.findOrCreateCacheDocument
 import com.par9uet.jm.cache.findCacheChildPath
 import com.par9uet.jm.cache.getDownloadDir
@@ -199,7 +200,10 @@ class CacheMigrationWorker(
         if (treeUri.isBlank()) return File(getDownloadDir(appContext), comicName).also(File::mkdirs).absolutePath
         val tree = Uri.parse(treeUri)
         val root = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
-        return requireNotNull(findOrCreateCacheDocument(appContext, root, comicName, DocumentsContract.Document.MIME_TYPE_DIR)).toString()
+        val resolved = requireNotNull(findOrCreateCacheDocument(appContext, root, comicName, DocumentsContract.Document.MIME_TYPE_DIR)).toString()
+        // 先放 .nomedia 再拷贝图片，避免迁移到共享存储的缓存被媒体扫描索引进相册
+        ensureNoMedia(appContext, resolved)
+        return resolved
     }
 
     private fun destinationDirectory(parentPath: String, name: String): String {

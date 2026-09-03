@@ -34,6 +34,9 @@ class CacheAdopter(
 
         // 登记规范根目录：此后封面/章节/config 的定位都收敛到同一根，止住重复目录。
         CacheRootIndex.put(context, groupId, canonical.path)
+        // 接管的常是共享存储上的历史目录：补写 .nomedia 并尽力触发重扫，
+        // 把 .nomedia 出现前已入库的缓存图片从相册/图片选择器中隐藏
+        ensureNoMedia(context, canonical.path)
 
         val configChapters = canonical.config?.chapters.orEmpty().associateBy { it.id }
         val complete = LinkedHashMap<Int, Int>()

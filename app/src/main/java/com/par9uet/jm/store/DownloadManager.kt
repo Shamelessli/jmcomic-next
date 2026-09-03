@@ -467,6 +467,28 @@ class DownloadManager(
         val missingPageIndices: IntArray = intArrayOf(),
     )
 
+    /** 面向缓存扫描/接管的公开补页任务：只补缺失页，不整章重下。 */
+    data class ChapterRepairTask(
+        val chapterId: Int,
+        val downloadCover: Boolean,
+        val downloadPages: Boolean = true,
+        val writeConfig: Boolean = true,
+        val missingPageIndices: List<Int> = emptyList(),
+    )
+
+    fun enqueueChapterRepairs(tasks: List<ChapterRepairTask>) {
+        if (tasks.isEmpty()) return
+        enqueueRepairRequests(tasks.map {
+            DownloadRepairRequest(
+                comicId = it.chapterId,
+                downloadCover = it.downloadCover,
+                downloadPages = it.downloadPages,
+                writeConfig = it.writeConfig,
+                missingPageIndices = it.missingPageIndices.toIntArray(),
+            )
+        })
+    }
+
     private fun enqueueRepairRequests(requests: List<DownloadRepairRequest>) {
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)

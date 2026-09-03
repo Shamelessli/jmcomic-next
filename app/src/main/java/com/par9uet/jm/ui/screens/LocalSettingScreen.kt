@@ -31,6 +31,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudSync
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.DarkMode
+import androidx.compose.material.icons.rounded.DocumentScanner
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.GridView
@@ -381,6 +382,13 @@ fun LocalSettingScreen(
                         value = if (localSetting.downloadTreeUri.isBlank()) "默认路径" else "自定义路径"
                     ) {
                         if (migrationActive) hiddenMigrationWorkId = null else showCachePathDialog = true
+                    }
+                    SettingsRow(
+                        icon = Icons.Rounded.DocumentScanner,
+                        title = "扫描缓存文件夹",
+                        value = "导入磁盘缓存并整理"
+                    ) {
+                        mainNavController.navigate("scanCache")
                     }
                     SettingsRow(
                         icon = Icons.Rounded.Download,
