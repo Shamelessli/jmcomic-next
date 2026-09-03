@@ -5,11 +5,19 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
+/** 单个章节的阅读进度。 */
+data class ChapterReadProgress(
+    val pageIndex: Int = 0,
+    val pageCount: Int = 0,
+)
+
 data class ComicReadHistory(
     val lastChapterId: Int = 0,
     val readChapterIds: List<Int> = emptyList(),
     val lastPageIndex: Int = 0,
     val lastChapterPageCount: Int = 0,
+    // 按章节记录的阅读进度。旧版本数据没有该字段，反序列化后可能为 null。
+    val chapterProgress: Map<Int, ChapterReadProgress>? = null,
 )
 
 class ReadHistoryStorage(

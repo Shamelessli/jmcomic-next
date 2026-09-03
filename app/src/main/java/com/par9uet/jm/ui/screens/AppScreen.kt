@@ -110,13 +110,18 @@ fun AppScreen(
                 ComicRelateListScreen(/*comicId = id*/)
             }
             composable(
-                route = "comicRead/{id}",
+                route = "comicRead/{id}?startPage={startPage}",
                 arguments = listOf(
-                    navArgument(name = "id") { type = NavType.IntType; defaultValue = -1 }
+                    navArgument(name = "id") { type = NavType.IntType; defaultValue = -1 },
+                    navArgument(name = "startPage") {
+                        type = NavType.StringType
+                        defaultValue = "resume"
+                    }
                 ),
             ) { backStackEntry ->
                 val id = backStackEntry.arguments?.getInt("id") ?: -1
-                ComicReadScreen(comicId = id)
+                val startPage = backStackEntry.arguments?.getString("startPage") ?: "resume"
+                ComicReadScreen(comicId = id, initialStartPage = startPage)
             }
             composable(
                 route = "comicSearch?searchContent={searchContent}&excludedTags={excludedTags}",
@@ -181,13 +186,18 @@ fun AppScreen(
                 DownloadComicDetailScreen(id = id)
             }
             composable(
-                route = "localComicRead/{id}",
+                route = "localComicRead/{id}?startPage={startPage}",
                 arguments = listOf(
-                    navArgument(name = "id") { type = NavType.IntType; defaultValue = -1 }
+                    navArgument(name = "id") { type = NavType.IntType; defaultValue = -1 },
+                    navArgument(name = "startPage") {
+                        type = NavType.StringType
+                        defaultValue = "resume"
+                    }
                 ),
             ) { backStackEntry ->
                 val id = backStackEntry.arguments?.getInt("id") ?: -1
-                ComicReadScreen(comicId = id, localOnly = true)
+                val startPage = backStackEntry.arguments?.getString("startPage") ?: "resume"
+                ComicReadScreen(comicId = id, localOnly = true, initialStartPage = startPage)
             }
         }
     }

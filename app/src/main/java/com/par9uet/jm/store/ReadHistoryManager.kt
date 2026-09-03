@@ -1,6 +1,7 @@
 package com.par9uet.jm.store
 
 import com.par9uet.jm.data.models.Comic
+import com.par9uet.jm.storage.ChapterReadProgress
 import com.par9uet.jm.storage.ComicReadHistory
 import com.par9uet.jm.storage.ReadHistoryStorage
 import com.par9uet.jm.task.AppInitTask
@@ -32,11 +33,16 @@ class ReadHistoryManager(
         val current = _readHistoryState.value.toMutableMap()
         val old = current[comicKey]
         val readIds = (old?.readChapterIds.orEmpty() + chapterId).distinct()
+        val chapterProgress = old?.chapterProgress.orEmpty()
+        // 打开章节时仅更新"最近阅读章节"标记，并保留各章节已有进度，
+        // 避免把上一个章节的页码带进新章节。
+        val saved = chapterProgress[chapterId]
         current[comicKey] = ComicReadHistory(
             lastChapterId = chapterId,
             readChapterIds = readIds,
-            lastPageIndex = old?.lastPageIndex ?: 0,
-            lastChapterPageCount = old?.lastChapterPageCount ?: 0,
+            lastPageIndex = saved?.pageIndex ?: 0,
+            lastChapterPageCount = saved?.pageCount ?: 0,
+            chapterProgress = chapterProgress,
         )
         _readHistoryState.update { current }
         readHistoryStorage.set(current)
@@ -47,11 +53,14 @@ class ReadHistoryManager(
         val current = _readHistoryState.value.toMutableMap()
         val old = current[comicKey]
         val readIds = (old?.readChapterIds.orEmpty() + chapterId).distinct()
+        val chapterProgress = (old?.chapterProgress.orEmpty()) +
+            (chapterId to ChapterReadProgress(pageIndex, pageCount))
         current[comicKey] = ComicReadHistory(
             lastChapterId = chapterId,
             readChapterIds = readIds,
             lastPageIndex = pageIndex,
             lastChapterPageCount = pageCount,
+            chapterProgress = chapterProgress,
         )
         _readHistoryState.update { current }
         readHistoryStorage.set(current)
@@ -81,6 +90,13 @@ class ReadHistoryManager(
         history: Map<Int, ComicReadHistory> = _readHistoryState.value
     ): Int {
         val entry = history[comicKey] ?: return 0
+        // 优先使用该章节自己的进度记录
+        val progress = entry.chapterProgress?.get(chapterId)
+        if (progress != null) {
+            if (progress.pageCount <= 0) return 0
+            return progress.pageIndex.coerceIn(0, progress.pageCount - 1)
+        }
+        // 兼容旧版本数据：仅当该章节恰好是最后一次阅读的章节时才使用旧字段
         if (entry.lastChapterId != chapterId) return 0
         if (entry.lastChapterPageCount <= 0) return 0
         return entry.lastPageIndex.coerceIn(0, entry.lastChapterPageCount - 1)

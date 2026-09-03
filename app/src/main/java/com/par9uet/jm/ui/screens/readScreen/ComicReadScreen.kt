@@ -52,6 +52,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
@@ -73,14 +74,18 @@ import com.par9uet.jm.store.UserManager
 import com.par9uet.jm.ui.screens.LocalMainNavController
 import com.par9uet.jm.ui.components.adaptiveDialogMaxHeight
 import com.par9uet.jm.ui.viewModel.ComicReadViewModel
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.filter
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.getKoin
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, FlowPreview::class)
 @Composable
 fun ComicReadScreen(
     comicId: Int,
     localOnly: Boolean = false,
+    initialStartPage: String = "resume",
     comicReadViewModel: ComicReadViewModel = koinViewModel(),
     localSettingManager: LocalSettingManager = getKoin().get(),
     readHistoryManager: ReadHistoryManager = getKoin().get(),
@@ -104,6 +109,8 @@ fun ComicReadScreen(
     val lazyListState = rememberLazyListState(initialFirstVisibleItemIndex = initialReaderIndex)
     val pagerState = rememberPagerState(initialPage = initialReaderIndex) { size }
     val zoomState = rememberReaderZoomState()
+    // 进入本页阅读位置的意图：由导航参数带进来，first/last 仅用于上一章/下一章按钮
+    val readerStart = ReaderStartPage.fromNav(initialStartPage)
     var targetIndex by remember { mutableIntStateOf(initialReaderIndex) }
     var activeDialog by remember { mutableStateOf<ReadPanelDialog?>(null) }
     var selectedCacheChapterIds by remember { mutableStateOf<Set<Int>>(emptySet()) }
@@ -131,12 +138,12 @@ fun ComicReadScreen(
         readableChapters.getOrNull(chapterIndex + 1)
     }
 
-    fun navigateToChapter(chapter: ComicChapter?) {
+    fun navigateToChapter(chapter: ComicChapter?, startPage: ReaderStartPage) {
         if (chapter == null) return
         val targetRoute = if (localOnly) {
-            "localComicRead/${chapter.id}"
+            "localComicRead/${chapter.id}?startPage=${startPage.navValue}"
         } else {
-            "comicRead/${chapter.id}"
+            "comicRead/${chapter.id}?startPage=${startPage.navValue}"
         }
         val currentRoute = if (localOnly) "localComicRead/$comicId" else "comicRead/$comicId"
         mainNavController.navigate(targetRoute) {
@@ -168,10 +175,16 @@ fun ComicReadScreen(
     LaunchedEffect(comicId) {
         val onSuccess = {
             if (loadedComicId != comicId) {
-                // 恢复上次阅读页数
-                val savedIndex = if (readHistoryComicId > 0) {
-                    readHistoryManager.lastReadPageIndex(readHistoryComicId, comicId, readHistory)
-                } else 0
+                // 按进入本页的意图决定起始位置：下一章到首页、上一章到末页、其余按章节断点续读
+                val savedIndex = when (readerStart) {
+                    ReaderStartPage.FIRST -> 0
+                    ReaderStartPage.LAST -> maxOf(0, size - 1)
+                    ReaderStartPage.RESUME -> {
+                        if (readHistoryComicId > 0) {
+                            readHistoryManager.lastReadPageIndex(readHistoryComicId, comicId, readHistory)
+                        } else 0
+                    }
+                }
                 currentIndexState = savedIndex
                 targetIndex = savedIndex
                 loadedComicId = comicId
@@ -206,6 +219,19 @@ fun ComicReadScreen(
                 )
             }
         }
+    }
+
+    // 阅读位置稳定后主动保存进度，避免切换章节时进度只依赖退出时机
+    LaunchedEffect(readHistoryComicId, loadedComicId, comicId, size) {
+        if (readHistoryComicId <= 0 || size <= 0 || loadedComicId != comicId) {
+            return@LaunchedEffect
+        }
+        snapshotFlow { currentIndexState }
+            .filter { it in 0 until size }
+            .debounce(800)
+            .collect { pageIndex ->
+                readHistoryManager.saveReadProgress(readHistoryComicId, comicId, pageIndex, size)
+            }
     }
 
     // 数据加载完成后，滚动到恢复的页码
@@ -346,8 +372,8 @@ fun ComicReadScreen(
                     previousChapterEnabled = previousChapter != null,
                     nextChapterEnabled = nextChapter != null,
                     showResetZoom = zoomState.isZoomed,
-                    onPreviousChapter = { navigateToChapter(previousChapter) },
-                    onNextChapter = { navigateToChapter(nextChapter) },
+                    onPreviousChapter = { navigateToChapter(previousChapter, ReaderStartPage.LAST) },
+                    onNextChapter = { navigateToChapter(nextChapter, ReaderStartPage.FIRST) },
                     onPageSelected = { jumpToIndex(it) },
                     onResetZoom = { zoomState.reset() }
                 )
@@ -424,7 +450,7 @@ fun ComicReadScreen(
                     onDismiss = { activeDialog = null },
                     onSelect = { chapter ->
                         activeDialog = null
-                        navigateToChapter(chapter)
+                        navigateToChapter(chapter, ReaderStartPage.RESUME)
                     }
                 )
             }
@@ -437,6 +463,26 @@ fun ComicReadScreen(
 private enum class ReadPanelDialog {
     Cache,
     Chapter
+}
+
+/** 进入某章节阅读时的起始位置意图。 */
+private enum class ReaderStartPage(val navValue: String) {
+    /** 从第一页开始（点击"下一章"时） */
+    FIRST("first"),
+
+    /** 从最后一页开始（点击"上一章"时） */
+    LAST("last"),
+
+    /** 恢复该章节上次阅读位置（章节目录跳转/断点续读） */
+    RESUME("resume");
+
+    companion object {
+        fun fromNav(value: String?): ReaderStartPage = when (value) {
+            "first" -> FIRST
+            "last" -> LAST
+            else -> RESUME
+        }
+    }
 }
 
 @Composable
