@@ -293,7 +293,26 @@ fun DownloadComicDetailScreen(
 
     val displayedIntegrityResult = forcedIntegrityResult ?: integrityResult
     val integritySignature = "${displayedIntegrityResult.brokenChapterIds.sorted().joinToString(",")}:${displayedIntegrityResult.missingCover}:${displayedIntegrityResult.missingConfig}:${displayedIntegrityResult.reason}"
-    if (!displayedIntegrityResult.isHealthy && dismissedIntegritySignature != integritySignature) {
+    if (displayedIntegrityResult.accessDenied) {
+        if (dismissedIntegritySignature != integritySignature) {
+            AlertDialog(
+                onDismissRequest = { dismissedIntegritySignature = integritySignature },
+                title = { Text("缓存目录无法访问") },
+                text = {
+                    Text(
+                        displayedIntegrityResult.reason.ifBlank {
+                            "缓存目录访问授权已失效，本地文件未丢失。"
+                        }
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { dismissedIntegritySignature = integritySignature }) {
+                        Text("知道了")
+                    }
+                },
+            )
+        }
+    } else if (!displayedIntegrityResult.isHealthy && dismissedIntegritySignature != integritySignature) {
         AlertDialog(
             onDismissRequest = { dismissedIntegritySignature = integritySignature },
             title = { Text("漫画内容损坏") },

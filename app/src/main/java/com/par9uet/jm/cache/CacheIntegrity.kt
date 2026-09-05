@@ -18,6 +18,8 @@ data class CacheIntegrityResult(
     val chapterIds: Set<Int> = emptySet(),
     /** Human-readable page numbers (1-based) missing from each broken chapter. */
     val missingPagesByChapter: Map<Int, List<Int>> = emptyMap(),
+    /** 缓存目录授权失效（非内容损坏）：不参与 isHealthy，避免误触发整本重下。 */
+    val accessDenied: Boolean = false,
 ) {
     val isHealthy: Boolean get() = brokenChapterIds.isEmpty() && !missingCover && !missingConfig
 }
@@ -37,6 +39,17 @@ fun checkComicCacheIntegrity(
             .mapNotNull(::getTreeUriForCachePath)
             .firstOrNull()
             ?.let { setDownloadTreeUri(context, it.toString()) }
+    }
+    // SAF 目录授权被系统回收（如国产 ROM 清理后台）时，所有查询都会抛 SecurityException。
+    // 此时磁盘文件完好，只是无权访问：提前返回并给出恢复指引，
+    // 否则后续检查会把"无权访问"误报成"config 缺失/内容损坏"，诱导用户整本重下。
+    val activeTreeUri = getDownloadTreeUri(context)
+    if (activeTreeUri != null && !isSafPathAccessible(context, activeTreeUri.toString())) {
+        return CacheIntegrityResult(
+            reason = CACHE_ACCESS_DENIED_MESSAGE,
+            accessDenied = true,
+            chapterIds = completed.mapTo(mutableSetOf()) { it.id },
+        )
     }
     // The cover belongs to the comic root while pages live in chapter folders.
     // Deriving the root from a page directory made every multi-chapter cache look

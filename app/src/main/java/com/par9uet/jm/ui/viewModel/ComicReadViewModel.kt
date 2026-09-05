@@ -6,12 +6,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import coil.ImageLoader
+import com.par9uet.jm.cache.CACHE_ACCESS_DENIED_MESSAGE
 import com.par9uet.jm.cache.getComicChapterDownloadDir
 import com.par9uet.jm.cache.getComicChapterDownloadPath
 import com.par9uet.jm.cache.getDownloadDir
 import com.par9uet.jm.cache.getDownloadTreeUri
 import com.par9uet.jm.cache.findExistingComicChapterDownloadPath
 import com.par9uet.jm.cache.getTreeUriForCachePath
+import com.par9uet.jm.cache.isSafPathAccessible
 import com.par9uet.jm.cache.setDownloadTreeUri
 import com.par9uet.jm.cache.listComicImageFiles
 import com.par9uet.jm.cache.isDocumentCachePath
@@ -230,6 +232,22 @@ class ComicReadViewModel(
                 }
             }
             val customStorageEnabled = getDownloadTreeUri(context) != null
+            // SAF 目录授权被系统回收（如国产 ROM 清理后台）时，所有查询都会抛
+            // SecurityException 并被吞成空列表。先探测，直接给出可操作的恢复指引，
+            // 而不是让用户看到"未找到本地缓存图片"去徒劳地重新下载。
+            val activeTreeUri = getDownloadTreeUri(context)
+            if (customStorageEnabled && activeTreeUri != null &&
+                !isSafPathAccessible(context, activeTreeUri.toString())
+            ) {
+                _comicPicState.update {
+                    it.copy(
+                        isLoading = false,
+                        isError = true,
+                        errorMsg = CACHE_ACCESS_DENIED_MESSAGE,
+                    )
+                }
+                return@launch
+            }
             // Once a custom tree is selected it is the source of truth. Reading
             // the old default path here made multi-page chapters appear to work
             // while still pointing at files that had already been migrated.
@@ -245,6 +263,16 @@ class ComicReadViewModel(
                         emptyList()
                     }
             } else {
+                if (isDocumentCachePath(storedPath) && !isSafPathAccessible(context, storedPath)) {
+                    _comicPicState.update {
+                        it.copy(
+                            isLoading = false,
+                            isError = true,
+                            errorMsg = CACHE_ACCESS_DENIED_MESSAGE,
+                        )
+                    }
+                    return@launch
+                }
                 storedPath.takeIf(::isDocumentCachePath)?.let { listLocalImages(context, it) }
                     ?: ensureLocalImageDir(context, comicId, downloadComic)
                         ?.let(::listComicImageFiles)
