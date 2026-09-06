@@ -13,6 +13,17 @@ import com.par9uet.jm.retrofit.model.NetWorkResult
 import com.par9uet.jm.retrofit.model.WeekRecommendComicResponse
 import com.par9uet.jm.retrofit.model.WeekResponse
 
+/** 多源取图的结果分类：用于区分"该重试的瞬时失败"与"资源确实不存在"。 */
+sealed class ImageFetchResult {
+    class Success(val bytes: ByteArray) : ImageFetchResult()
+
+    /** 所有来源都明确返回 404/410：页面资源不存在，重试无意义。 */
+    object NotFound : ImageFetchResult()
+
+    /** 瞬时失败（网络抖动、非 404 的 HTTP 错误、超时等），可换源/重试。 */
+    class Failed(val reason: String? = null) : ImageFetchResult()
+}
+
 interface ComicRepository {
     suspend fun getComicDetail(id: Int): NetWorkResult<ComicDetailResponse>
     suspend fun likeComic(id: Int): NetWorkResult<LikeComicResponse>
@@ -25,8 +36,9 @@ interface ComicRepository {
     /**
      * 依次尝试多个图片 URL（内嵌 API 列表、网络列表、封面域名规则等），
      * 返回第一个成功下载的图片字节。用于图片源临时不可用时自动换源重试。
+     * 所有来源都返回 404/410 时给出 [ImageFetchResult.NotFound]，调用方可快速失败。
      */
-    suspend fun fetchImageBytesForSources(comicId: Int, imageIndex: Int, sources: List<String>): ByteArray?
+    suspend fun fetchImageBytesForSources(comicId: Int, imageIndex: Int, sources: List<String>): ImageFetchResult
     suspend fun getComicList(
         page: Int,
         order: ComicSearchOrderFilter,

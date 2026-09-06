@@ -6,6 +6,7 @@ import com.par9uet.jm.data.models.COMIC_API_SOURCE_NETWORK
 import com.par9uet.jm.data.models.ComicSearchOrderFilter
 import com.par9uet.jm.repository.BaseRepository
 import com.par9uet.jm.repository.ComicRepository
+import com.par9uet.jm.repository.ImageFetchResult
 import com.par9uet.jm.retrofit.model.CollectComicResponse
 import com.par9uet.jm.retrofit.model.ComicDetailRelatedListItemResponse
 import com.par9uet.jm.retrofit.model.ComicDetailResponse
@@ -637,7 +638,7 @@ class ComicRepositoryImpl(
 
     override suspend fun downloadImageBytes(comicId: Int, imageIndex: Int): ByteArray? {
         val imageUrl = embeddedImageUrl(comicId, imageIndex) ?: return null
-        return fetchBytes(imageUrl)
+        return (fetchBytesWithStatus(imageUrl) as? ImageFetchResult.Success)?.bytes
     }
 
     private suspend fun embeddedImageUrl(comicId: Int, imageIndex: Int): String? {
@@ -650,33 +651,62 @@ class ComicRepositoryImpl(
         comicId: Int,
         imageIndex: Int,
         sources: List<String>,
-    ): ByteArray? {
+    ): ImageFetchResult {
         val candidates = buildList {
             // 1. 内嵌 API 缓存的原始图片 URL（当前数据的首选源）
             embeddedImageUrl(comicId, imageIndex)?.let(::add)
             // 2. 显式传入的候选 URL（网络列表、换域名规则等）
             addAll(sources)
         }.distinct()
+        if (candidates.isEmpty()) return ImageFetchResult.Failed("无可用图片源")
+        var sawTransientFailure = false
+        var lastReason: String? = null
         for (url in candidates) {
-            val bytes = fetchBytes(url) ?: continue
-            return bytes
+            when (val result = fetchBytesWithStatus(url)) {
+                is ImageFetchResult.Success -> return result
+                is ImageFetchResult.NotFound -> Unit
+                is ImageFetchResult.Failed -> {
+                    sawTransientFailure = true
+                    lastReason = result.reason
+                }
+            }
         }
-        return null
+        // 每个源都明确 404/410 → 资源确实不存在；否则按瞬时失败处理，可重试
+        return if (sawTransientFailure) {
+            ImageFetchResult.Failed(lastReason)
+        } else {
+            ImageFetchResult.NotFound
+        }
     }
 
-    private suspend fun fetchBytes(url: String): ByteArray? = withContext(Dispatchers.IO) {
+    private suspend fun fetchBytesWithStatus(url: String): ImageFetchResult = withContext(Dispatchers.IO) {
         try {
             val request = buildImageRequest(url)
             cleanHttpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    logError("ComicRepositoryImpl", "下载图片失败: HTTP ${response.code} URL=$url")
-                    return@withContext null
+                when {
+                    response.isSuccessful -> {
+                        val bytes = response.body?.bytes()
+                        if (bytes != null && bytes.isNotEmpty()) {
+                            ImageFetchResult.Success(bytes)
+                        } else {
+                            ImageFetchResult.Failed("响应体为空")
+                        }
+                    }
+
+                    response.code == 404 || response.code == 410 -> {
+                        logError("ComicRepositoryImpl", "图片资源不存在: HTTP ${response.code} URL=$url")
+                        ImageFetchResult.NotFound
+                    }
+
+                    else -> {
+                        logError("ComicRepositoryImpl", "下载图片失败: HTTP ${response.code} URL=$url")
+                        ImageFetchResult.Failed("HTTP ${response.code}")
+                    }
                 }
-                response.body?.bytes()
             }
         } catch (e: Exception) {
             logError("ComicRepositoryImpl", "下载图片异常: ${e.message} URL=$url")
-            null
+            ImageFetchResult.Failed(e.message)
         }
     }
 

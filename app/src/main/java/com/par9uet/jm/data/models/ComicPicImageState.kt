@@ -56,11 +56,18 @@ class ComicPicImageState(
 
     var imageResultState by mutableStateOf<ImageResultState>(ImageResultState.Loading)
 
-    suspend fun decode(context: Context, downscale: Boolean = false) {
+    /**
+     * 解码并去扰乱当前页。
+     *
+     * @param saveToDecodeCache 是否把结果写入阅读用的解码缓存（pic_decode）。
+     *   下载流程应传 false：下载产物本身会落盘到章节目录，跳过这次额外的
+     *   WebP 编码+写盘可显著提速，且避免缓存目录里出现无人读取的副本。
+     */
+    suspend fun decode(context: Context, downscale: Boolean = false, saveToDecodeCache: Boolean = true) {
         withContext(Dispatchers.Default) {
             imageResultState = ImageResultState.Loading
             try {
-                decodeImage(context, downscale)
+                decodeImage(context, downscale, saveToDecodeCache)
             } catch (e: OutOfMemoryError) {
                 logError("ComicPicImage", "解码图片 OOM: ${e.message}")
                 System.gc()
@@ -72,7 +79,7 @@ class ComicPicImageState(
         }
     }
 
-    private suspend fun decodeImage(context: Context, downscale: Boolean = false) {
+    private suspend fun decodeImage(context: Context, downscale: Boolean = false, saveToDecodeCache: Boolean = true) {
         val cacheDir = getCommonPicDecodeCacheDir(context, comicId)
         if (!cacheDir.exists()) {
             cacheDir.mkdirs()
@@ -120,10 +127,10 @@ class ComicPicImageState(
                         originalImageBitmap.width * 1.0f / originalImageBitmap.height
                     var decodedImageBitmap = originalImageBitmap
                     if (isGif() || comicId <= __scrambleId || __speed == "1") {
-                        saveBitmapAsWebp(originalBitmap, cacheFile)
+                        if (saveToDecodeCache) saveBitmapAsWebp(originalBitmap, cacheFile)
                     } else {
                         val decodedBitmap = decodeBitmap(originalBitmap, page)
-                        saveBitmapAsWebp(decodedBitmap, cacheFile)
+                        if (saveToDecodeCache) saveBitmapAsWebp(decodedBitmap, cacheFile)
                         decodedImageBitmap = decodedBitmap.asImageBitmap()
                     }
                     imageResultState =
@@ -158,10 +165,10 @@ class ComicPicImageState(
                                 originalImageBitmap.width * 1.0f / originalImageBitmap.height
                             var decodedImageBitmap = originalImageBitmap
                             if (isGif() || comicId <= __scrambleId || __speed == "1") {
-                                saveBitmapAsWebp(originalBitmap, cacheFile)
+                                if (saveToDecodeCache) saveBitmapAsWebp(originalBitmap, cacheFile)
                             } else {
                                 val decodedBitmap = decodeBitmap(originalBitmap, page)
-                                saveBitmapAsWebp(decodedBitmap, cacheFile)
+                                if (saveToDecodeCache) saveBitmapAsWebp(decodedBitmap, cacheFile)
                                 decodedImageBitmap = decodedBitmap.asImageBitmap()
                             }
                             imageResultState =

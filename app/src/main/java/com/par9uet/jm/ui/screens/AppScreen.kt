@@ -148,6 +148,15 @@ fun AppScreen(
             }
             composable(route = "extractCode") { ExtractCodeScreen() }
             composable(
+                route = "extractCodeResult/{codes}",
+                arguments = listOf(
+                    navArgument(name = "codes") { type = NavType.StringType }
+                ),
+            ) { backStackEntry ->
+                val codes = backStackEntry.arguments?.getString("codes") ?: ""
+                ExtractCodeResultScreen(codes = codes)
+            }
+            composable(
                 route = "comicSearchResult/{searchContent}?excludedTags={excludedTags}",
                 arguments = listOf(
                     navArgument(name = "searchContent") { type = NavType.StringType },

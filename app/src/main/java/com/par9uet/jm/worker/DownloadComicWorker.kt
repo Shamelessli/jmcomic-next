@@ -1,47 +1,68 @@
 package com.par9uet.jm.worker
 
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.net.Uri
+import android.os.Build
+import android.provider.DocumentsContract
+import androidx.core.app.NotificationCompat
 import androidx.core.graphics.drawable.toBitmap
 import androidx.work.CoroutineWorker
+import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import coil.ImageLoader
 import coil.request.ErrorResult
 import coil.request.ImageRequest
 import coil.request.SuccessResult
-import com.par9uet.jm.cache.cachePathLength
-import com.par9uet.jm.cache.isCacheMigrationRunning
+import com.par9uet.jm.MainActivity
+import com.par9uet.jm.R
 import com.par9uet.jm.cache.getComicChapterDownloadPath
 import com.par9uet.jm.cache.getComicCoverDownloadPath
 import com.par9uet.jm.cache.getOrCreateCacheFile
+import com.par9uet.jm.cache.isCacheMigrationRunning
+import com.par9uet.jm.cache.isDocumentCachePath
 import com.par9uet.jm.cache.openCacheOutputStream
 import com.par9uet.jm.cache.writeDocumentComicCacheConfig
 import com.par9uet.jm.data.models.ComicPicImageState
-import com.par9uet.jm.network.ComicCoverUrlResolver
 import com.par9uet.jm.database.dao.DownloadComicDao
 import com.par9uet.jm.database.model.DownloadComic
 import com.par9uet.jm.database.model.UpdateComicCover
 import com.par9uet.jm.database.model.UpdateComicProgress
 import com.par9uet.jm.database.model.UpdateComicStatus
 import com.par9uet.jm.database.model.UpdateComicZipPath
+import com.par9uet.jm.network.ComicCoverUrlResolver
 import com.par9uet.jm.repository.ComicRepository
+import com.par9uet.jm.repository.ImageFetchResult
 import com.par9uet.jm.retrofit.model.ComicPicListResponse
 import com.par9uet.jm.retrofit.model.NetWorkResult
 import com.par9uet.jm.store.DownloadConcurrencyGate
+import com.par9uet.jm.store.DownloadPageGate
 import com.par9uet.jm.store.DownloadProgressMessageStore
 import com.par9uet.jm.store.DownloadToastAggregator
 import com.par9uet.jm.store.LocalSettingManager
 import com.par9uet.jm.store.RemoteSettingManager
 import com.par9uet.jm.utils.COMIC_CACHE_NOTIFICATION_ID_BASE
+import com.par9uet.jm.utils.DOWNLOAD_NOTIFICATION_CHANNEL_ID
 import com.par9uet.jm.utils.DownloadSpeedTracker
 import com.par9uet.jm.utils.cancelProgressNotification
 import com.par9uet.jm.utils.compressWebpCompat
 import com.par9uet.jm.utils.logError
 import com.par9uet.jm.utils.showProgressNotification
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
-private const val DOWNLOAD_PAGE_TIMEOUT_MS = 180_000L
+/** 单页超时收紧到 90s：配合页内 3 次尝试与整章退避重试，挂起连接不再长时间占住章节。 */
+private const val DOWNLOAD_PAGE_TIMEOUT_MS = 90_000L
 private const val DOWNLOAD_MAX_ATTEMPTS = 6
 
 /** 每页解码落盘的尝试次数；超过后由 WorkManager 整章退避重试兜底。 */
@@ -57,7 +78,10 @@ class DownloadComicWorker(
     private val downloadToastAggregator: DownloadToastAggregator,
     private val imageLoader: ImageLoader,
     private val downloadConcurrencyGate: DownloadConcurrencyGate,
+    private val downloadPageGate: DownloadPageGate,
 ) : CoroutineWorker(appContext, params) {
+
+    private val notificationMutex = Mutex()
 
     override suspend fun doWork(): Result {
         if (isCacheMigrationRunning(appContext)) return Result.retry()
@@ -124,6 +148,19 @@ class DownloadComicWorker(
             } catch (e: kotlinx.coroutines.CancellationException) {
                 // worker 被系统取消时应立即终止，不能按失败进入退避重试
                 throw e
+            } catch (e: PermanentDownloadException) {
+                // 页面在所有来源上都不存在：重试无意义，直接置错误状态，
+                // 避免消耗 6 次整章退避去撞同一堵墙
+                updateProgressMessage(
+                    downloadTask = downloadComicDao.getById(comicId),
+                    message = e.message ?: "部分页面资源不存在",
+                )
+                logError("DownloadComicWorker", "章节 $comicId 快速失败：${e.message}")
+                downloadComicDao.updateStatus(UpdateComicStatus(comicId, "error"))
+                DownloadSpeedTracker.stopTracking(coverOwnerId)
+                downloadComicDao.getById(comicId)?.let { cancelComicCacheNotificationIfIdle(it) }
+                downloadToastAggregator.report(batchId, batchTotal, comicId, success = false)
+                Result.failure()
             } catch (e: Exception) {
                 updateProgressMessage(
                     downloadTask = downloadComicDao.getById(comicId),
@@ -205,12 +242,16 @@ class DownloadComicWorker(
         }
     }
 
+    /**
+     * 下载章节内所有页面。页与页之间按 [downloadPageGate] 的全局许可并行执行
+     * （网络等待互相重叠），已完整落盘的页面按每章一次的磁盘列表直接跳过。
+     */
     private suspend fun downloadPicList(
         downloadTask: DownloadComic,
         shunt: String,
         missingPageIndices: Set<Int> = emptySet(),
-    ): List<String> {
-        return withContext(Dispatchers.IO) {
+    ) {
+        withContext(Dispatchers.IO) {
             val comicId = downloadTask.id
             updateProgressMessage(downloadTask, "获取图片列表")
             when (val data = comicRepository.getComicPicList(comicId, shunt)) {
@@ -220,91 +261,163 @@ class DownloadComicWorker(
                         throw IllegalStateException("图片列表为空")
                     }
 
+                    val urls = data.data.list
                     val dir = getComicChapterDownloadPath(appContext, downloadTask)
                     val imageHost = remoteSettingManager.remoteSettingState.value.imgHost
-                    var maxProgress = downloadComicDao.getById(comicId)?.progress ?: 0f
                     val pageDownloader = ComicPageDownloader(appContext)
+                    val total = urls.size
+                    val groupChapters = downloadComicDao.getByGroupId(
+                        downloadTask.groupId.takeIf { it != 0 } ?: downloadTask.id
+                    )
+                    // 每章一次列出磁盘上已有的完整页面，替代旧的逐页存在性查询
+                    // （自定义 SAF 路径下每次查询都是一次跨进程 IPC）
+                    val existingPages = listExistingPageIndexes(dir)
+                    // Repair jobs carry the exact missing page indexes. Existing
+                    // pages and pages not requested by the repair are never
+                    // decoded or overwritten.
+                    val requestedPages = if (missingPageIndices.isEmpty()) {
+                        (0 until total).toList()
+                    } else {
+                        (0 until total).filter { it in missingPageIndices }
+                    }
+                    val done = AtomicInteger(existingPages.size.coerceIn(0, total))
+                    val permanentFailure = AtomicReference<String?>(null)
+                    val firstFailure = AtomicReference<Throwable?>(null)
 
-                    data.data.list.mapIndexed { index, url ->
-                        // Repair jobs carry the exact missing page indexes.
-                        // Existing pages and pages not requested by the repair
-                        // are never decoded or overwritten.
-                        if (missingPageIndices.isNotEmpty() && index !in missingPageIndices) {
-                            return@mapIndexed ""
-                        }
-                        val file = getOrCreateCacheFile(appContext, dir, "$index.webp", "image/webp")
-                        val nextProgress = (index + 1).toFloat() / data.data.list.size
-                        val progressMessage = {
-                            updateProgressMessage(
-                                downloadTask,
-                                if (ComicPageDownloader.isCompleteCacheFile(appContext, file)) {
-                                    "检查第 ${index + 1}/${data.data.list.size} 张图片"
-                                } else {
-                                    "下载第 ${index + 1}/${data.data.list.size} 张图片"
+                    if (existingPages.containsAll(requestedPages)) {
+                        // 断点续跑：所需页面均已完整落盘，无需网络请求
+                        reportPageProgress(downloadTask, done.get(), total, groupChapters)
+                    } else {
+                        coroutineScope {
+                            for (index in requestedPages) {
+                                if (permanentFailure.get() != null) break
+                                if (index in existingPages) continue
+                                launch {
+                                    try {
+                                        val written = downloadPageGate.withPermit {
+                                            // 轮到自己执行时若已知资源不存在，直接放弃，
+                                            // 不再为排队中的页面发起无意义请求
+                                            permanentFailure.get()?.let {
+                                                throw PermanentDownloadException(it)
+                                            }
+                                            val file = getOrCreateCacheFile(
+                                                appContext, dir, "$index.webp", "image/webp",
+                                            )
+                                            // 取图源：网络列表 URL + 换域名候选；内置 API 源由仓库 imageFetcher 兜底
+                                            val fallbackSources = ComicCoverUrlResolver.imageHostCandidates(
+                                                urls[index], imageHost,
+                                            )
+                                            val imageState = ComicPicImageState(
+                                                index = index,
+                                                comicId = comicId,
+                                                originSrc = urls[index],
+                                                __scrambleId = data.data.__scrambleId,
+                                                __speed = data.data.__speed,
+                                                picImageLoader = imageLoader,
+                                                imageFetcher = {
+                                                    when (val result = comicRepository.fetchImageBytesForSources(
+                                                        comicId, index, fallbackSources,
+                                                    )) {
+                                                        is ImageFetchResult.Success -> result.bytes
+                                                        is ImageFetchResult.NotFound -> {
+                                                            permanentFailure.compareAndSet(
+                                                                null,
+                                                                "第 ${index + 1} 页在所有图片来源上均不存在（HTTP 404）",
+                                                            )
+                                                            null
+                                                        }
+
+                                                        is ImageFetchResult.Failed -> null
+                                                    }
+                                                }
+                                            )
+                                            withTimeout(DOWNLOAD_PAGE_TIMEOUT_MS) {
+                                                pageDownloader.downloadPage(
+                                                    pageIndex = index,
+                                                    imageState = imageState,
+                                                    filePath = file,
+                                                    maxAttempts = PAGE_ATTEMPTS,
+                                                    permanentFailureProbe = { permanentFailure.get() },
+                                                )
+                                            }
+                                        }
+                                        DownloadSpeedTracker.addBytes(
+                                            downloadTask.groupId.takeIf { it != 0 } ?: downloadTask.id,
+                                            written.sizeBytes,
+                                        )
+                                        reportPageProgress(
+                                            downloadTask, done.incrementAndGet(), total, groupChapters,
+                                        )
+                                    } catch (e: PermanentDownloadException) {
+                                        permanentFailure.compareAndSet(null, e.message ?: "页面资源不存在")
+                                    } catch (e: kotlinx.coroutines.CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        firstFailure.compareAndSet(null, e)
+                                    }
                                 }
-                            )
-                        }
-                        // 已有完整图片直接跳过，不重复下载/解码
-                        if (ComicPageDownloader.isCompleteCacheFile(appContext, file)) {
-                            progressMessage()
-                            val progress = updateChapterProgressIfAdvanced(
-                                downloadTask = downloadTask,
-                                currentMaxProgress = maxProgress,
-                                nextProgress = nextProgress
-                            )
-                            maxProgress = progress.chapterProgress
-                            showComicCacheNotification(downloadTask, progress.groupProgress)
-                            return@mapIndexed file
-                        }
-
-                        progressMessage()
-                        // 取图源：网络列表 URL + 换域名候选；内置 API 源由仓库 imageFetcher 兜底
-                        val fallbackSources = ComicCoverUrlResolver.imageHostCandidates(url, imageHost)
-                        val imageState = ComicPicImageState(
-                            index = index,
-                            comicId = comicId,
-                            originSrc = url,
-                            __scrambleId = data.data.__scrambleId,
-                            __speed = data.data.__speed,
-                            picImageLoader = imageLoader,
-                            imageFetcher = {
-                                comicRepository.fetchImageBytesForSources(
-                                    comicId = comicId,
-                                    imageIndex = index,
-                                    sources = fallbackSources,
-                                )
                             }
-                        )
-                        val resultFile = try {
-                            withTimeout(DOWNLOAD_PAGE_TIMEOUT_MS) {
-                                pageDownloader.downloadPage(
-                                    pageIndex = index,
-                                    imageState = imageState,
-                                    filePath = file,
-                                    maxAttempts = PAGE_ATTEMPTS,
-                                )
-                            }
-                        } catch (e: kotlinx.coroutines.CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            throw IllegalStateException("第 ${index + 1} 页下载或解码超时", e)
                         }
-                        DownloadSpeedTracker.addBytes(
-                            downloadTask.groupId.takeIf { it != 0 } ?: downloadTask.id,
-                            cachePathLength(appContext, resultFile)
-                        )
-                        val progress = updateChapterProgressIfAdvanced(
-                            downloadTask = downloadTask,
-                            currentMaxProgress = maxProgress,
-                            nextProgress = nextProgress
-                        )
-                        maxProgress = progress.chapterProgress
-                        showComicCacheNotification(downloadTask, progress.groupProgress)
-                        resultFile
+                        permanentFailure.get()?.let { throw PermanentDownloadException(it) }
+                        firstFailure.get()?.let { throw it }
                     }
                 }
             }
         }
+    }
+
+    /** 每章一次列出磁盘上已有的完整页面索引（带大小校验）。 */
+    private fun listExistingPageIndexes(dirPath: String): Set<Int> {
+        return if (isDocumentCachePath(dirPath)) {
+            runCatching {
+                val uri = Uri.parse(dirPath)
+                val children = DocumentsContract.buildChildDocumentsUriUsingTree(
+                    uri, DocumentsContract.getDocumentId(uri),
+                )
+                val indexes = mutableSetOf<Int>()
+                appContext.contentResolver.query(
+                    children,
+                    arrayOf(
+                        DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                        DocumentsContract.Document.COLUMN_SIZE,
+                    ),
+                    null, null, null,
+                )?.use { cursor ->
+                    while (cursor.moveToNext()) {
+                        val name = cursor.getString(0) ?: continue
+                        val size = if (cursor.isNull(1)) 0L else cursor.getLong(1)
+                        name.substringBeforeLast('.').toIntOrNull()
+                            ?.takeIf { size >= ComicPageDownloader.MIN_VALID_FILE_SIZE }
+                            ?.let(indexes::add)
+                    }
+                }
+                indexes
+            }.getOrDefault(emptySet())
+        } else {
+            File(dirPath).listFiles()
+                ?.mapNotNull { file ->
+                    file.name.substringBeforeLast('.').toIntOrNull()
+                        ?.takeIf { file.length() >= ComicPageDownloader.MIN_VALID_FILE_SIZE }
+                }
+                ?.toSet()
+                .orEmpty()
+        }
+    }
+
+    private suspend fun reportPageProgress(
+        downloadTask: DownloadComic,
+        doneCount: Int,
+        total: Int,
+        groupChapters: List<DownloadComic>,
+    ) {
+        if (total <= 0) return
+        val chapterProgress = (doneCount.toFloat() / total).coerceIn(0f, 1f)
+        downloadComicDao.updateProgress(UpdateComicProgress(downloadTask.id, chapterProgress))
+        updateProgressMessage(downloadTask, "已缓存 $doneCount/$total 页")
+        showComicCacheNotification(
+            downloadTask,
+            resolveGroupProgress(downloadTask, chapterProgress, groupChapters)
+        )
     }
 
     private suspend fun writeCacheConfig(comicId: Int) {
@@ -327,24 +440,13 @@ class DownloadComicWorker(
         return resolveGroupProgress(downloadTask, chapterProgress)
     }
 
-    private suspend fun updateChapterProgressIfAdvanced(
+    private suspend fun resolveGroupProgress(
         downloadTask: DownloadComic,
-        currentMaxProgress: Float,
-        nextProgress: Float
-    ): DownloadProgress {
-        val chapterProgress = maxOf(currentMaxProgress, nextProgress.coerceIn(0f, 1f))
-        if (chapterProgress > currentMaxProgress) {
-            downloadComicDao.updateProgress(UpdateComicProgress(downloadTask.id, chapterProgress))
-        }
-        return DownloadProgress(
-            chapterProgress = chapterProgress,
-            groupProgress = resolveGroupProgress(downloadTask, chapterProgress)
-        )
-    }
-
-    private suspend fun resolveGroupProgress(downloadTask: DownloadComic, currentProgress: Float): Float {
+        currentProgress: Float,
+        cachedChapters: List<DownloadComic>? = null,
+    ): Float {
         val groupId = downloadTask.groupId.takeIf { it != 0 } ?: downloadTask.id
-        val chapters = downloadComicDao.getByGroupId(groupId)
+        val chapters = cachedChapters ?: downloadComicDao.getByGroupId(groupId)
         if (chapters.isEmpty()) return currentProgress
         return chapters.map { chapter ->
             when {
@@ -364,7 +466,13 @@ class DownloadComicWorker(
         }
     }
 
-    private fun showComicCacheNotification(downloadTask: DownloadComic, progress: Float) {
+    /**
+     * 更新下载进度通知，并尽力把 worker 提升为前台服务：长时间批量下载在后台
+     * 极易被系统冻结/杀进程（还连累 SAF 授权），前台服务可以显著降低这种概率。
+     * 通知开关关闭时保持原行为（不显示通知也不进前台）；Android 12+ 在后台
+     * 禁止启动前台服务时静默降级为普通后台执行。
+     */
+    private suspend fun showComicCacheNotification(downloadTask: DownloadComic, progress: Float) {
         val groupId = downloadTask.groupId.takeIf { it != 0 } ?: downloadTask.id
         val setting = localSettingManager.localSettingState.value
         if (!setting.showComicCacheNotification) {
@@ -378,17 +486,49 @@ class DownloadComicWorker(
             "正在缓存漫画"
         }
         val progressPercent = (progress.coerceIn(0f, 1f) * 100).toInt()
-        showProgressNotification(
-            context = appContext,
-            notificationId = COMIC_CACHE_NOTIFICATION_ID_BASE + groupId,
-            title = title,
-            text = "$progressPercent%",
-            progressPercent = progressPercent
-        )
+        // 串行化通知/前台更新：并行页会并发触发本方法
+        notificationMutex.withLock {
+            showProgressNotification(
+                context = appContext,
+                notificationId = COMIC_CACHE_NOTIFICATION_ID_BASE + groupId,
+                title = title,
+                text = "$progressPercent%",
+                progressPercent = progressPercent
+            )
+            runCatching {
+                setForeground(createDownloadForeground(groupId, title, progressPercent))
+            }.onFailure {
+                logError("DownloadComicWorker", "前台服务启动失败（后台限制）：${it.message}")
+            }
+        }
     }
 
-    private data class DownloadProgress(
-        val chapterProgress: Float,
-        val groupProgress: Float
-    )
+    private fun createDownloadForeground(groupId: Int, title: String, progressPercent: Int): ForegroundInfo {
+        val openApp = PendingIntent.getActivity(
+            appContext,
+            COMIC_CACHE_NOTIFICATION_ID_BASE + groupId,
+            Intent(appContext, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val notification = NotificationCompat.Builder(appContext, DOWNLOAD_NOTIFICATION_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_download_notification)
+            .setContentTitle(title)
+            .setContentText("$progressPercent%")
+            .setContentIntent(openApp)
+            .setOnlyAlertOnce(true)
+            .setOngoing(true)
+            .setProgress(100, progressPercent.coerceIn(0, 100), false)
+            .build()
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ForegroundInfo(
+                COMIC_CACHE_NOTIFICATION_ID_BASE + groupId,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+            )
+        } else {
+            ForegroundInfo(COMIC_CACHE_NOTIFICATION_ID_BASE + groupId, notification)
+        }
+    }
 }
